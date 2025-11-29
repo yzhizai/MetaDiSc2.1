@@ -1,325 +1,1023 @@
-# if (!require("pacman")) install.packages("pacman")
-# pacman::p_load(shiny, DT, shinythemes, shinydashboard, shinycssloaders, plotly, ggplot2, rsconnect, ggsci, shinyWidgets)
+# Required R packages:
+library(shiny) # Rshiny package.
+library(shinyjs) # for javascript code.
+library(shinydashboard) # for layout purposes.
+library(plotly) # for graph building and rendering.
+library(DT) # for table building and rendering.
+library(shinycssloaders) # for "Loading..." animations.
 
-library(shiny)
-library(plotly)
-library(DT)
-library(shinythemes)
-library(shinydashboard)
-library(shinycssloaders)
-library(ggplot2)
-library(rsconnect)
-library(ggsci)
-library(shinyWidgets)
-library(plogr)
-source("funciones.R")
+# ----------------------------------------------------------------------------------------------- #
 
-# START OF UI 
-shinyUI(tagList(
-  dashboardPage(
-    
+# Start of the app UI:
+shinyUI(tagList( 
+
+  useShinyjs(),
   
+  tags$style(HTML(".inactiveLink1 {
+                    pointer-events: none;
+                    cursor: not-allowed;
+                    background-color: #324249 !important;
+                    border-color: #324249 !important;}"
+                   )), # CSS code to characterize the "inactive" class that will be assigned to the sidebar tabs that cannot be accessible.
+  
+  tags$style(HTML(".inactiveLink2 {
+                    pointer-events: none;
+                    cursor: not-allowed !important;
+                    color: #CCCCCC !important;}"
+                   )), # CSS code to characterize the "inactive" class that will be assigned to the metanalysis tabs that cannot be accessible.  
+  
+  tags$style(HTML(".modal.in .modal-dialog{width:auto; height:auto; margin:auto;}
+                   .modal-content{width:auto; height:auto; background-color:#eeeeee; }
+                   .modal-footer{display:none} 
+                   .modal {position:absolute; top:28%; left:40%; transform: translate(-33%, -20%);}"
+                   )), # CSS code to make the landing page. 
+                       # .modal-footer{display:none} to avoid displaying the default "dismiss" button.
+  
+  tags$style(HTML(".shiny-notification {
+                   position:fixed;
+                   top: 500px;
+                   left: 215px;
+                   height: 80px;
+                   width: 55%;}"
+                   )), # CCS code to adjust the position and size of the notifications box.
+  
+    tags$head(tags$link(rel = "icon", type = "image/png", sizes = "16x16", href = "RyC.png")), # Browser tab icon.
+  
+    dashboardPage(skin = "blue", # Color of the app's dashboard.
+                           
+    # HEADER content and format:                                                                                                                          
+    dashboardHeader(title="Meta-DiSc 2.0",
+                    titleWidth = 200),
     
+    # SIDEBAR content and format:
+    dashboardSidebar(
+              width = 200,
+                
+              # Sidebar menu contents:
+              sidebarMenu(id = "sidebar_tabs",
+                 
+                 # First item: FILE UPLOAD
+                 menuItem("File upload", # Name that will appear on the corresponding item.
+                          tabName = "file_tab", # Name that will be used to call (internally) the corresponding item.
+                          icon = icon("file-upload") # Icon that will appear, alongside the name, on the corresponding item (to find the different icons available visit: https://fontawesome.com/).
+                          ),
+                 
+                 # Second item: GRAPHICAL DESCRIPTION
+                 menuItem("Graphical description", 
+                          tabName ="graph_tab", 
+                          icon = icon("chart-pie")
+                          ),
+                 
+                 # Third item: METANALYSIS
+                 menuItem("Meta-analysis", 
+                          tabName ="meta_tab", 
+                          icon = icon("chart-bar")
+                          ),
+                 
+                 # Third item: METANALYSIS
+                 menuItem("Summary of findings", 
+                          tabName ="sumfind_tab", 
+                          icon = icon("list-ul")
+                          ),
+                 
+                 # Fourth item: USER GUIDE
+                 menuItem("User guide", 
+                          tabName ="user_tab", 
+                          icon = icon("info-circle")
+                 )),
+              
+              # IMAGE at the bottom of the sidebar (the image is placed within a "div" that is positioned at the bottom of the page):
+              tags$div(style = "width:100%; 
+                                position: absolute;
+                                bottom:50px;",
+                       
+                       tags$img(src = 'RyC.png', # The image must be saved in a folder called "www" located in the folder where the rest of the app files are stored.
+                                alt = "Busto de Ramón y Cajal", # The text to be displayed in case the image cannot be loaded.
+                                style = "display: block;
+                                         margin-left: auto;
+                                         margin-right: auto;
+                                         width:70%;"
+                                )
+                       )
+              ),
     
-    header =   dashboardHeader(title="Meta-DiSc",
-                               titleWidth = 350),
-    
-    sidebar =   dashboardSidebar(
-      width = 350,
-      sidebarMenu( id = "tabs",
-                   
-                   #INTRO
-                   menuItem(
-                     "Introduction", tabName = "intro", icon = icon("info-circle")
-                   ),
-                   
-                   #MENU FILE
-                   menuItem(
-                     "File upload", tabName ="fidata", icon = icon("folder-open")
-                   ),
-                   
-                   # MENU STATS
-                   menuItem(
-                     "Statistics", tabName="stats", icon = icon("table"),
-                     menuSubItem("Study-level outcome", tabName = "stats1"),
-                     menuSubItem("Meta-analysis", tabName = "glm"),
-                     menuSubItem("Heterogeneity", tabName = "stats2"),
-                     menuSubItem("Analysis of subgroups", tabName = "subgroups"),
-                     menuSubItem("Meta-regression", tabName = "metaregression"),
-                     menuSubItem("Sensibility", tabName = "stats3")
-                   ),
-                   
-                   #REFERENCES
-                   menuItem(
-                     "References", tabName = "ref", icon = icon("search-plus")
-                   )
-      )),
-    
-    
-    body =   dashboardBody(
+    # BODY content and format (for each of the tabs, separately):
+    dashboardBody(
       
-      tags$head(
-        tags$link(rel="stylesheet", type = "text/css", href="custom.css")
-      ),
+      # CSS code to change the default shiny dashboard blue skin colors (top horizontal line and sidebar):
+      tags$head(tags$style(HTML('
+        /* logo */
+        .skin-blue .main-header .logo {
+        background-color: #1f4c6a;
+        }
+        
+        /* logo when hovered */
+        .skin-blue .main-header .logo:hover {
+        background-color: #1a415b;
+        }
+        
+        /* navbar (rest of the header) */
+        .skin-blue .main-header .navbar {
+        background-color: #235779;
+        }        
+        
+        /* main sidebar */
+        .skin-blue .main-sidebar {
+        background-color: #222d32;
+        }
+        
+        /* active selected tab in the sidebarmenu */
+        .skin-blue .main-sidebar .sidebar .sidebar-menu .active a{
+        background-color: #1a2226;
+        border-left-color: #235779;
+        }
+        
+        /* other links in the sidebarmenu */
+        .skin-blue .main-sidebar .sidebar .sidebar-menu a{
+        background-color: #222d32;
+        color: #ffffff;
+        }
+        
+        /* other links in the sidebarmenu when hovered */
+        .skin-blue .main-sidebar .sidebar .sidebar-menu a:hover{
+        background-color: #1a2226;
+        border-left-color: #235779;
+        }
+
+        /* toggle button when hovered  */                    
+        .skin-blue .main-header .navbar .sidebar-toggle:hover{
+        background-color: #1f4c6a;
+        }
+        
+        /* box header */   
+        .box.box-solid.box-success>.box-header {
+        color:#fff;
+        background:#235779
+        }
+        
+        /* box border */
+        .box.box-solid.box-success{
+        border-bottom-color:#235779;
+        border-left-color:#235779;
+        border-right-color:#235779;
+        border-top-color:#235779;
+        }
+        '))),
+
       
+      # Other CSS customizations:
+      tags$style(HTML(".nav-tabs-custom .nav-tabs li.active {border-top-color: #235779; font-weight:bold; font-size:16px;}"
+                      )), # CSS code to customize the color and font of the top horizontal tabs when selected.
+      tags$style(HTML(".tabbable > .nav > li[class=active]>a {background-color: #235779; border-top-color:white; color:white}"
+                      )), # CSS code to customize the color of the bottom horizontal tabs when selected.
+      tags$style(HTML(".box-header h3.box-title {font-size:16px;}"
+                      )), # CSS code to customize the font size of box titles.
+      tags$style(HTML(
+        ".nav-tabs-custom .nav-tabs a[data-value='meta_biv_sub_summary_stats_tab']{font-size:14px;}
+         .nav-tabs-custom .nav-tabs li.active a[data-value='meta_biv_sub_summary_stats_tab']{border-top-color: #235779; font-weight:bold; font-size:14px;}
+         .nav-tabs-custom .nav-tabs a[data-value='meta_biv_sub_revman_tab']{font-size:14px;}
+         .nav-tabs-custom .nav-tabs li.active a[data-value='meta_biv_sub_revman_tab']{border-top-color: #235779; font-weight:bold; font-size:14px;}
+         .nav-tabs-custom .nav-tabs a[data-value='meta_biv_sub_metareg_tab']{font-size:14px;}
+         .nav-tabs-custom .nav-tabs li.active a[data-value='meta_biv_sub_metareg_tab']{border-top-color:#235779; font-weight:bold; font-size:14px;}
+         .nav-tabs-custom .nav-tabs a[data-value='meta_biv_sub_heterogeneity_tab']{font-size:14px;}
+         .nav-tabs-custom .nav-tabs li.active a[data-value='meta_biv_sub_heterogeneity_tab']{border-top-color: #235779; font-weight:bold; font-size:14px;}
+        "
+          )), # CSS code to customize the color and font of the "Subgroup analysis" tabs. 
       
       tabItems(
         
-        # MAIN DASHBOARD INTRO
-        tabItem( tabName = "intro",
-                 h1("Meta-DiSc"), br(),
-                 p(
-                   "Meta-DiSc",tags$sub("[1]"), "is freeware software to perform Meta-analysis of studies of evaluations of Diagnostic and Screening tests."
-                 ),
-                 p(
-                   "Data must be imported from text files in '.csv' format."
-                 ), 
-                 p("Meta-DiSc"),
-                 
-                 tags$ol(type = "a",
-                         tags$li("allows exploration of heterogeneity, with a variety of statistics including chi-square, I-squared and Spearman correlation tests,"),
-                         tags$li("implements meta-regression techniques to explore the relationships between study characteristics and accuracy estimates, "),
-                         tags$li("performs statistical pooling of sensitivities, specificities, likelihood ratios and diagnostic odds ratios using fixed and random effects models, both overall and in subgroups and"),
-                         tags$li("produces high quality figures, including forest plots and summary receiver operating characteristic curves that can be exported for use in manuscripts for publication. All computational algorithms have been validated through comparison with different statistical tools and published meta-analyses.")
-                 ),
-                 p("Meta-DiSc has a Graphical User Interface with roll-down menus, dialog boxes, and online help facilities.")
-        ),
-        
-        # MAIN DASHBOARD FILE
-        tabItem( tabName="fidata",
-                 fluidRow(
-                   column(width = 4,
-                          box( fileInput(
-                            label = "Select file (.csv)",
-                            inputId = "file1",
-                            multiple = F, 
-                            accept = c("text/csv",
-                                       "text/comma-separated-values,text/plain",
-                                       ".csv")
-                            
-                          ),
-                          p(
-                            "File must contains the columns \"ID, TP, FP, FN, TN\". "
-                          ),
-                          
-                          tags$hr(),
-                          actionButton(inputId = "Apply", "Apply"), width =  NULL),
-                          
-                          box("Download template csv",
-                              actionButton(inputId="template", label = "Download Template"), width = NULL)
-                   ),
-                   column(width = 8,
-                          box(withSpinner(DT::dataTableOutput("DataImport"), type = 5),title = "Input Data", solidHeader = TRUE, status = "primary", width = NULL)
-                   ))
-        ),
-        
-        # MAIN DASHBOARD STATS
-        tabItem(tabName = "stats1",
+        # Content for the FILE UPLOAD tab:
+        tabItem(tabName="file_tab",
                 fluidRow(
-                  box(title="Study-level outcome",withSpinner(DT::dataTableOutput("slevelTable")), status="primary", solidHeader = TRUE,
-                      downloadButton("downloadData1", label = "Download"), width = 8, collapsible = TRUE),
-                  infoBox("Diagnostic test accuracy summary statistics",
-                          value = tags$ul(tags$li("id: Study id"),tags$li("tp: true positives"), tags$li("fp: false positives"),tags$li("fn: false negatives"),
-                                          tags$li("tn: true negatives"),tags$li("n1: tp + fn"), tags$li("n0: fp + tn"),tags$li("pos: tp + fp"),tags$li("neg: tn + fn"), 
-                                          tags$li("sens: tp/n1"),tags$li("spec: tn/n0"))
-                          , width = 4, color = "light-blue")
+                   column(width = 12,
+                          box(width = "100%",
+                              height = 100,
+                              column(width = 9,
+                                      fileInput(inputId = "file_upload",
+                                                label = "Select file:",
+                                                multiple = FALSE,
+                                                accept = c("text/csv",
+                                                           "text/comma-separated-values,text/plain",
+                                                           ".csv", ".xlsx", ".xls"),
+                                                buttonLabel = "Browse",
+                                                placeholder = "No file selected..."
+                                                )),
+                              
+                              column(width = 2,
+                                     fluidRow(
+                                       column(width = 4,
+                                              radioButtons(inputId = "file_upload_options1",
+                                                           label = "Format:",
+                                                           choices = c(".xlsx", ".csv"),
+                                                           selected = ".xlsx",
+                                                           inline = FALSE)
+                                              ),
+                                       column(width = 8,
+                                               radioButtons(inputId = "file_upload_options2",
+                                                            label = "Delimiter:",
+                                                            choices = c("Comma", "Semicolon"),
+                                                            selected = "Comma",
+                                                            inline = FALSE)
+                                                               
+                                              )
+                                              )
+                                     ),
+        
+                              column(width = 1, 
+                                      actionButton(inputId = "file_reset",
+                                                   label = "Reset",
+                                                   style = "position:relative;
+                                                            top:25px;"
+                                                   )
+                                     )
+                              )
+                          )
+                         ),
+                
+                fluidRow(
+                  column(width = 8,
+                         box(width = "100%",
+                             style = "overflow-x: scroll;overflow-y:hidden",
+                             conditionalPanel(condition = "output.file_not_uploaded == true",
+                                              tags$h4(tags$strong("File upload instructions")),
+                                              tags$p("Before uploading a dataset, ", tags$strong("select a format"), "for the file: '.csv' or '.xlsx'."),
+                                              tags$p("If you want to upload a '.csv' file, you will be asked to ", tags$strong("choose a delimiter"), ": 'comma' (,) or 'semicolon' (;)."),
+                                              tags$p("The 'comma' delimiter implies that a ",  tags$strong("period (.)"), " is used to indicate decimals."),
+                                              tags$p("The 'semicolon' as delimiter implies that a ", tags$strong("comma (,)"), " is used to indicate decimals."),
+                                              tags$p("The file must contain the following columns: ", tags$strong("ID, TP, FP, TN, FN"), ". It is important that these columns have the specified names so that the program can recognize them.", tags$strong("Order as well as upper or lower case are not important"), ". In addition, the file may contain additional columns that will be identified as covariates."),
+                                              actionButton("ex_dataset", "Load an example dataset")
+                                              ),
+                             withSpinner(DT::dataTableOutput(outputId = "file_table"), 
+                                                             type = 6,
+                                                             size = 0.5,
+                                                             color = "#235779")
+                            )
+                         ),
+                
+                  column(width = 4,
+                        conditionalPanel(condition = "output.file_not_uploaded == false",
+                                         box(width = "100%",
+                                             style = "overflow-x: scroll;",
+                                             title = "Data summary",
+                                             status = "success",
+                                             solidHeader = TRUE,
+                                             collapsible = TRUE,
+                                             withSpinner(DT::dataTableOutput(outputId = "file_dataset_summary"),
+                                                                             type = 6,
+                                                                             size = 0.5,
+                                                                             color = "#235779"),
+                                             tags$br(),
+                                             tags$div(style="float:right;",
+                                                      downloadButton("dl_data_summary", "Download"))
+                                             ),
+                                         conditionalPanel(condition = "output.senspe0_warning == true",
+                                                          box(status = "warning",
+                                                              background = "orange",
+                                                              width = "100%",
+                                                              uiOutput("senspe0_message")))
+                                          )
+                         )
+                        )
                 ),
-                
-                tags$br(), tags$br(), tags$br(), tags$br(),
-                
+        
+        # Content for the GRAPHICAL DESCRIPTION tab:
+        tabItem(tabName = "graph_tab",
                 fluidRow(
-                  
-                  box(title = "Forest Plot of sensitivity", status="primary", solidHeader = TRUE,
-                      withSpinner(plotlyOutput("CIsen", height = "1000px")),
-                      tags$br(), tags$br()
-                      ),
-                  box(title = "Forest Plot of specificity", status="primary", solidHeader = TRUE,
-                      withSpinner(plotlyOutput("CIspe", height = "1000px")),
-                      tags$br(), tags$br()
-                      )
-                ),
+                  column(width = 12,
+                         box(width = "100%",
+                             selectInput(inputId = "graph_covariate_select",
+                                         label = "Select a covariate if you want to perform a graphical description by subgroups:",
+                                         choices = ""
+                                         )
+                            )
+                         )
+                         ),
                 
-                tags$br(), tags$br(), tags$br(), tags$br(), tags$br(), tags$br(), tags$br(), tags$br(), tags$br(), tags$br()
+                tabBox(id = "graph_tabbox",
+                       width = "100%",
+                       height = "auto",
+                       tabPanel("Forest plots",
+                                id = "graph_forest_plots_tab",
+                                value = "graph_forest_plots_tab",
+                                fluidRow(
+                                  column(width = 6,
+                                         box(width = "100%",
+                                             style = "overflow-x: scroll;",
+                                             title = "Sensitivity",
+                                             status = "success",
+                                             solidHeader = TRUE,
+                                             collapsible = TRUE,
+                                             conditionalPanel("output.file_not_uploaded == true",
+                                                              tags$p("Upload a dataset!")),
+                                             conditionalPanel("output.file_not_uploaded == false",
+                                                              tags$div(align = "center",
+                                                                       withSpinner(uiOutput("graph_forest_sen"),
+                                                                                   type = 6,
+                                                                                   size = 0.5,
+                                                                                   color = "#235779")),
+                                                              tags$br(),
+                                                              tags$div(style="display:inline-block; float:right;", 
+                                                              downloadButton("dl_graph_forest_sen", "Download")
+                                                              ),
+                                                              tags$div(style="display:inline-block; vertical-align:top; width:120px; float:right;",
+                                                                       radioButtons(inputId = "dl_forest_sen_options",
+                                                                                    label = NULL,
+                                                                                    choices = c(".png", ".svg"),
+                                                                                    selected = ".png",
+                                                                                    inline = TRUE)
+                                                              )
+                                                              
+                                             ) 
+                                            )
+                                         ),
+                                  
+                                  column(width = 6,
+                                         box(width = "100%",
+                                             style = "overflow-x: scroll;",
+                                             title = "Specificity",
+                                             status = "success",
+                                             solidHeader = TRUE,
+                                             collapsible = TRUE,
+                                             conditionalPanel("output.file_not_uploaded == true",
+                                                              tags$p("Upload a dataset!")),
+                                             conditionalPanel("output.file_not_uploaded == false",
+                                                              tags$div(align = "center",
+                                                                       withSpinner(uiOutput("graph_forest_spe"),
+                                                                                   type = 6,
+                                                                                   size = 0.5,
+                                                                                   color = "#235779")),
+                                                              tags$br(),
+                                                              tags$div(style="display:inline-block; float:right;", 
+                                                                       downloadButton("dl_graph_forest_spe", "Download")
+                                                              ),
+                                                              tags$div(style="display:inline-block; vertical-align:top; width:120px; float:right;",
+                                                                       radioButtons(inputId = "dl_forest_spe_options",
+                                                                                    label = NULL,
+                                                                                    choices = c(".png", ".svg"),
+                                                                                    selected = ".png",
+                                                                                    inline = TRUE)
+                                                              )
+                                                              
+                                             ) 
+                                         )
+                                  )
+                                )
+                       ),
+                       
+                       tabPanel("ROC plane",
+                                id = "graph_ROC_plane_tab",
+                                fluidRow(
+                                column(width = 7,
+                                       box(width = "100%",
+                                           style = "overflow-x: scroll;",
+                                           title = "ROC plane",
+                                           status = "success",
+                                           solidHeader = TRUE,
+                                           collapsible = TRUE,
+                                           conditionalPanel("output.file_not_uploaded == true",
+                                                            tags$p("Upload a dataset!")),
+                                           conditionalPanel("output.file_not_uploaded == false",
+                                                            
+                                                            # The plot is placed inside a "div" so it can be centered:
+                                                            tags$div(style="display:inline-block; float:left; font-weight: bold; width:230px;", 
+                                                                     "Display confidence interval bars:"),
+                                                            tags$div(style="display:inline-block; float:left;", 
+                                                            radioButtons(inputId = "graph_roc_ci_display",
+                                                                         label = NULL,
+                                                                         choices = c("Yes" = TRUE,
+                                                                                     "No" = FALSE),
+                                                                         selected = FALSE,
+                                                                         inline = TRUE)),
+                                                            tags$br(),
+                                                            tags$br(),
+                                                            tags$div(align = "center", 
+                                                                     withSpinner(plotlyOutput("graph_roc", height = "600px"),
+                                                                                type = 6,
+                                                                                size = 0.5,
+                                                                                color = "#235779")),
+                                                            tags$br(),
+                                                            tags$div(style="display:inline-block; float:right;", 
+                                                                     downloadButton("dl_graph_roc", "Download")
+                                                                     ),
+                                                            tags$div(style="display:inline-block; vertical-align:top; width:120px; float:right;",
+                                                                     radioButtons(inputId = "dl_graph_roc_options",
+                                                                                  label = NULL,
+                                                                                  choices = c(".png", ".svg"),
+                                                                                  selected = ".png",
+                                                                                  inline = TRUE)
+                                                                     )
+                                                            )
+                                           )
+                                       )
+                                       )
+              )
+            )
         ),
         
-        # META-ANALYSIS
-        tabItem(tabName = "glm", 
-                fluidRow(
-                  box(title = "GLM statistic estimates", width = 4, header = T, status = "primary", solidHeader = TRUE, height = 450,
-                      withSpinner(tableOutput("glm_table")),
-                      downloadButton("downloadDataGlm", "Download")),
-                  box(title = "Parameters for Review Manager", width = 3, header=T, status = "primary", solidHeader = TRUE, height = 450,
-                      withSpinner(tableOutput("tablaRevMan")),
-                      downloadButton("downloadRevMan", "Download"))
-                      ),
-                
-                fluidRow(
-                  box(title = "Options for the SROC plot", width = 4, header = T, status = "primary", solidHeader = TRUE,
-                      checkboxGroupInput("sroc_options", label = "Check the options to be shown", selected = c("studies", "ellipse"),
-                                         choices = c("Studies" = "studies", "Sens/Spec average" = "averages", "Prediction ellipse" = "ellipse"))
-                      ),
-                  box(title = "SROC plane",  header = T, status = "primary", solidHeader = T, height = 550, 
-                    withSpinner(plotlyOutput("SROC")))
-                    ),
-                
-                br(), br(), br(), br()
-        ),
-        
-        # HETEROGENEITY
-        tabItem(tabName = "stats2",
-                fluidRow(
-                  box(title="Heterogeneity statistics estimates", width = 4, header = T, status = "primary", solidHeader = TRUE,
-                      withSpinner(tableOutput("tabla_het")),
-                      downloadButton("downloadHet_est", "Download")
-                      ),
-                  
-                  box(title="Heterogeneity statistics estimates","Heterogeneity statistics estimates (95% credible interval) by the Bayesian approach. This model does not take in account the covariates." ,
-                      header = T, status = "primary", solidHeader = TRUE,
-                      tags$br(), tags$br(),
-                      actionButton("heter", "Calculate estimates"),
-                      tags$br(), tags$br(),
-                      conditionalPanel(condition = "input.heter > 0", withSpinner(tableOutput("Table2"), type = 5), 
-                                       downloadButton('downloadDataHet', "Download") ) 
-                      ),
-                  tags$br(), tags$br(), tags$br(), tags$br(), tags$br(), tags$br(), tags$br(), tags$br(), tags$br(), tags$br()
-                  
-                )
-        ),
-        
-        # ANALYSIS OF SUBGROUPS
-        tabItem(tabName = "subgroups",
-                fluidRow(
-                  box(title = "Analysis of subgroups", status = "primary", header = T, solidHeader = TRUE,
-                      p("Separate meta-analysis for each subgroup."),
-                      selectInput(inputId = "subgroups_list", label = "Select  a subgroup to fit the new model.",
-                                  choices = NULL, selected = NULL ),
-                      actionButton("subgroup_button", label = "Fit model")
-                      ),
-                  conditionalPanel(condition= "input.subgroup_button > 0", 
-                                   box(title= "Analysis completed.", 
-                                       textOutput("subgroup"), 
-                                       width = 2, status = "success"))
-                ),
-                fluidRow(conditionalPanel(condition= "input.subgroup_button > 0", 
-                                          box(title = "Estimates", status = "primary", header = T, solidHeader = TRUE,
-                                              h5("GLM statistic estimates for each subgroup"), 
-                                              withSpinner(uiOutput("glm_subgroups")),
-                                              br(), br()),
-                                          box(title = "SROC plane", status = "primary", header = T, solidHeader = TRUE,
-                                              withSpinner(plotlyOutput("sroc_subgroups")))
-                                          ),
-                         br(), br(), br(), br()), 
-                fluidRow(
-                  conditionalPanel(condition = "input.comparation > 0",
-                                   box(title= "Compare test accuracy", status = "primary", header = T, solidHeader = TRUE)
-                                   )
-                )
-        ),
-        
-        # META-REGRESSION
-        tabItem(tabName = "metaregression",
-                fluidRow(
-                  box(title = "Meta-regression", status = "primary", header = T, solidHeader = TRUE,
-                      withSpinner(tableOutput("combinations")), width = 7, 
-                      
-                      selectInput(inputId = "covariates_list", label = "Select  a covariate with two levels: ",
-                                  choices = NULL, selected = NULL ),
-                      actionButton("metareg_button", label = "Fit model")
-                  )
-                ),
-                
-                fluidRow(
-                  
-                  
-                  conditionalPanel(condition= "input.metareg_button > 0", 
-                                   box(title = "Models", status = "primary", header = T, solidHeader = T, width = 10,
-                                       #withSpinner(verbatimTextOutput("error_E")),
-                                       withSpinner(verbatimTextOutput("models")),
-                                       #withSpinner(verbatimTextOutput("model_A")),
-                                       withSpinner(tableOutput("model_final")),
-                                       withSpinner(verbatimTextOutput("nsub"))
-                                   )
-                  )
-                ),
-                
-                br(), br(), br(), br()
-
-        ),
-
-        
-        # SENSIBILITY
-        tabItem(tabName = "stats3",
-                fluidRow(
-                  box(title="Sensibility", width = 12, header = T, status = "primary", solidHeader = TRUE,
-                      p("The bivariate binomial.......
-                        Fit a generalized linear mixed model, which incorporates both fixed-effects parameters and random effects in a linear predictor, via maximum likelihood. The linear predictor is related to the conditional mean of the response through the inverse link function defined in the GLM family.")),
-                  box(
-                    title = "Selection", header = T, status = "primary", solidHeader = TRUE,
-                    checkboxGroupInput(inputId = "studies_list", 
-                                       label = "Select the studies that you want to exclude from the model:",
-                                       choices = NULL), 
-                    width = 4, 
-                    actionButton("refresh", "Refresh")
+        # Content for the METANALYSIS tab:
+        tabItem(tabName = "meta_tab",
+        tabBox(id = "meta_tabbox",
+               width = "100%",
+               height = "auto",
                     
-                  ),
-                  
-                  conditionalPanel(condition = "input.refresh > 0", 
-                                   
-                                   
-                                   box(title="GLM estimates for selected studies", header = T, status = "primary", solidHeader = TRUE,
-                                       withSpinner(tableOutput("glm_table_sens")),  width = 4,
-                                       downloadButton("downloadDataGlm_sens", "Download")
-                                   ),
-                                   
-                                   box(title="SROC plot of selected studies", header = T, status = "primary", solidHeader = TRUE,
-                                       withSpinner(plotlyOutput(outputId = "sroc_sens")), width = 6, height = 550)
-                  )
-                )
-        ),
+                    tabPanel("Bivariate model",
+                             id = "meta_biv_tab",
+                             value = "meta_biv_tab",
+                             tabsetPanel(type = "pills",
+                                         id = "meta_biv_tabset",
+                                         
+                                         tabPanel("Statistics",
+                                                  id = "meta_biv_stats_tab",
+                                                  value = "meta_biv_stats_tab",
+                                                  tags$hr(),
+                                                  conditionalPanel(condition = "output.bivariate == true",
+                                                  
+                                                    conditionalPanel(condition = "output.varcorr_recommend == true",
+                                                                     fluidRow(
+                                                                       column(width = 12,
+                                                                              box(status = "warning",
+                                                                                  background = "orange",
+                                                                                  width = "80%",
+                                                                                  uiOutput("varcorr_message"))))),
+                                                    fluidRow(
+                                                    column(width = 4,
+                                                           box(width = "100%",
+                                                               style = "overflow-x: scroll;",
+                                                               title = "Summary statistics",
+                                                               status = "success",
+                                                               solidHeader = TRUE,
+                                                               collapsible = TRUE,
+                                                               withSpinner(DT::dataTableOutput(outputId = "meta_biv_stats_summary"), 
+                                                                                               type = 6,
+                                                                                               size = 0.5,
+                                                                                               color = "#235779"),
+                                                               tags$br(),
+                                                               tags$div(style="float:right;",
+                                                                        downloadButton("dl_meta_biv_stats_summary", "Download"))
+                                                               )   
+                                                           ),
+                                                    
+                                                    column(width = 4,
+                                                           box(width = "100%",
+                                                               style = "overflow-x: scroll;",
+                                                               title = "RevMan parameters",
+                                                               status = "success",
+                                                               solidHeader = TRUE,
+                                                               collapsible = TRUE,
+                                                               withSpinner(DT::dataTableOutput(outputId = "meta_biv_stats_revman"), 
+                                                                                               type = 6,
+                                                                                               size = 0.5,
+                                                                                               color = "#235779"),
+                                                               tags$br(),
+                                                               tags$div(style="float:right;",
+                                                                        downloadButton("dl_meta_biv_stats_revman", "Download"))
+                                                               )
+                                                           ),
+                                                    
+                                                    column(width = 4,
+                                                           box(width = "100%",
+                                                               style = "overflow-x: scroll;",
+                                                               title = "Heterogeneity",
+                                                               status = "success",
+                                                               solidHeader = TRUE,
+                                                               collapsible = TRUE,
+                                                               withSpinner(DT::dataTableOutput(outputId = "meta_biv_stats_heterogen"), 
+                                                                                               type = 6,
+                                                                                               size = 0.5,
+                                                                                               color = "#235779"),
+                                                               tags$br(),
+                                                               tags$div(style="float:right;",
+                                                                        downloadButton("dl_meta_biv_stats_heterogen", "Download"))
+                                                               )
+                                                           )
+                                                           )
+                                                  ),
+                                                  
+                                                  conditionalPanel(condition = "output.bivariate == false",
+                                                                   fluidRow(
+                                                                     column(width = 12,
+                                                                           box(status = "warning",
+                                                                               background = "orange",
+                                                                               width = "80%",
+                                                                               uiOutput("univariate_message")
+                                                                               )
+                                                                           )
+                                                                           )
+                                                          )
+                                                  ),
+                                         
+                                         tabPanel("SROC curve", 
+                                                  id = "meta_biv_sroc_tab",
+                                                  value = "meta_biv_sroc_tab",
+                                                  tags$hr(),
+                                                  fluidRow(
+                                                    column(width = 8,
+                                                           box(width = "100%",
+                                                               style = "overflow-x: scroll;",
+                                                               title = "SROC curve",
+                                                               status = "success",
+                                                               solidHeader = TRUE,
+                                                               collapsible = TRUE,
+                                                               
+                                                               # The plot is placed inside a "div" so it can be centered:
+                                                               tags$div(align="center", 
+                                                                        withSpinner(plotlyOutput("meta_biv_sroc_curve", height = "600px"),
+                                                                                     type = 6,
+                                                                                     size = 0.5,
+                                                                                     color = "#235779")),
+                                                               
+                                                               tags$div(style="display:inline-block; float:right;", 
+                                                                        downloadButton("dl_meta_biv_sroc_curve", "Download")
+                                                                        ),
+                                                               tags$div(style="display:inline-block; vertical-align:top; width:120px; float:right;",
+                                                                        radioButtons(inputId = "dl_meta_biv_sroc_curve_options",
+                                                                                     label = NULL,
+                                                                                     choices = c(".png", ".svg"),
+                                                                                     selected = ".png",
+                                                                                     inline = TRUE)
+                                                                        )
+                                                               )   
+                                                           ),
+                                                    
+                                                    column(width = 4,
+                                                           box(width = "100%",
+                                                               style = "overflow-x: scroll;",
+                                                               title = "SROC display options",
+                                                               status = "success",
+                                                               solidHeader = TRUE,
+                                                               collapsible = TRUE,
+                                                               checkboxGroupInput(inputId = "meta_biv_sroc_options",
+                                                                                  label = "Select the features you would like to display:",
+                                                                                  choices = c("Summary point" = "sum_point",
+                                                                                              "Confidence ellipse" = "conf_ellip",
+                                                                                              "Prediction ellipse" = "pred_ellip",
+                                                                                              "Curve" = "curve",
+                                                                                              "Points" = "points"
+                                                                                              ),
+                                                                                  selected = c("sum_point", "conf_ellip", "pred_ellip")
+                                                                                  )
+                                                               )
+                                                           )
+                                                           )
+                                                 ),
+                                         
+                                        tabPanel("Subgroup analysis", 
+                                                 id = "meta_biv_sub_tab",
+                                                 value = "meta_biv_sub_tab",
+                                                 tags$hr(),
+                                                 fluidRow(
+                                                   column(width = 6,
+                                                          selectInput(inputId = "meta_biv_sub_covariate_select",
+                                                                      label = "Select a covariate to perform a subgroup analysis:",
+                                                                      choices = "",
+                                                                      width = "100%"
+                                                                      )
+                                                          ),
+                                                   column(width = 6,
+                                                          checkboxGroupInput(inputId = "meta_biv_sub_options",
+                                                                             label = "Select the features you would like to display:",
+                                                                             choices = c("Summary point" = "sum_point",
+                                                                                         "Confidence ellipse" = "conf_ellip",
+                                                                                         "Prediction ellipse" = "pred_ellip",
+                                                                                         "Curve" = "curve",
+                                                                                         "Points" = "points"
+                                                                                         ),
+                                                                             selected = c("sum_point", "conf_ellip", "pred_ellip"),
+                                                                             inline = TRUE
+                                                                              )
+                                                            )
+                                                          ),
+                                                 
+                                                 conditionalPanel(condition = "output.subgroup_categories == true",
+                                                                  fluidRow(
+                                                                    column(width = 12,
+                                                                           box(status = "warning",
+                                                                               background = "orange",
+                                                                               width = "80%",
+                                                                               HTML("<p style='text-align:center';><i class='fa fa-exclamation-circle'></i> The selected covariate has only one category (in which case the subgroup analysis is not applicable) or more than two categories. Currently Meta-DiSc 2.0 does not perform subgroup analysis for more than two categories. Please select another covariate.</p>")))
+                                                                  )),
+                                                 
+                                                 conditionalPanel(condition = "output.subgroup_categories == false",
+                                                 
+                                                 conditionalPanel(condition = "output.bivariate_subgroup == false",
+                                                                  fluidRow(
+                                                                  column(width = 12,
+                                                                  box(status = "warning",
+                                                                      background = "orange",
+                                                                      width = "80%",
+                                                                      HTML("<p style='text-align:center';><i class='fa fa-exclamation-circle'></i> One or more subgroups has less than 4 studies or did not reach convergence for the bivariate model. Please select another covariate for subgroup analysis.</p>")))
+                                                                  )),
+
+                                                 conditionalPanel(condition = "output.bivariate_subgroup == true",
+                                                 fluidRow(
+                                                   column(width = 6,
+                                                          box(width = "100%",
+                                                              style = "overflow-x: scroll;",
+                                                              title = "Statistics",
+                                                              status = "success",
+                                                              solidHeader = TRUE,
+                                                              collapsible = TRUE,
+                                                              
+                                                              tabBox(width = "100%",
+                                                                     id = "subgroup_tabbox",
+                                                                     
+                                                                     tabPanel("Summary statistics",
+                                                                              id = "meta_biv_sub_summary_stats_tab",
+                                                                              value = "meta_biv_sub_summary_stats_tab",
+                                                                              fluidRow(
+                                                                                column(width = 12,
+                                                                                       style = "overflow-x: scroll;",
+                                                                                       
+                                                                                       withSpinner(DT::dataTableOutput("meta_biv_sub_summary"),
+                                                                                                   type = 6,
+                                                                                                   size = 0.5,
+                                                                                                   color = "#235779"),
+                                                                                       tags$br(),
+                                                                                       tags$div(style="float:right;",
+                                                                                                downloadButton("dl_meta_biv_sub_summary", "Download"))
+                                                                                       )
+                                                                                       )
+                                                                              ),
+                                                              
+                                                                     tabPanel("RevMan parameters",
+                                                                              id = "meta_biv_sub_revman_tab",
+                                                                              value = "meta_biv_sub_revman_tab",
+                                                                              fluidRow(  
+                                                                                column(width = 12,
+                                                                                       style = "overflow-x: scroll;",
+                                                                                       withSpinner(DT::dataTableOutput("meta_biv_sub_revman"),
+                                                                                                   type = 6,
+                                                                                                   size = 0.5,
+                                                                                                   color = "#235779"),
+                                                                                       tags$p("* The model has been fitted assuming that the variances of the two categories are equal."),
+                                                                                       tags$br(),
+                                                                                       tags$div(style="float:right;",
+                                                                                                downloadButton("dl_meta_biv_sub_revman", "Download"))
+                                                                                       )
+                                                                                       )
+                                                                              ),
+                                                            
+                                                                     tabPanel("Metaregression",
+                                                                              id = "meta_biv_sub_metareg_tab",
+                                                                              value = "meta_biv_sub_metareg_tab",
+                                                                              fluidRow( 
+                                                                                column(width = 12,
+                                                                                       style = "overflow-x: scroll;",
+                                                                                       withSpinner(DT::dataTableOutput("meta_biv_sub_metareg"),
+                                                                                                   type = 6,
+                                                                                                   size = 0.5,
+                                                                                                   color = "#235779"),
+                                                                                       tags$br(),
+                                                                                       tags$div(style="float:right;",
+                                                                                                downloadButton("dl_meta_biv_sub_metareg", "Download"))
+                                                                                )
+                                                                              )
+                                                                     )
+                                                                     )   
+                                                           )
+                                                          ),
+                                                
+                                                   column(width = 6,
+                                                          box(width = "100%",
+                                                              style = "overflow-x: scroll;",
+                                                              title = "SROC curve",
+                                                              status = "success",
+                                                              solidHeader = TRUE,
+                                                              collapsible = TRUE,
+                                                              conditionalPanel(condition = "output.sub_roc_warning == true",
+                                                              withSpinner(plotlyOutput("meta_biv_sub_sroc"),
+                                                                          type = 6,
+                                                                          size = 0.5,
+                                                                          color = "#235779"),
+                                                              
+                                                              tags$div(style="display:inline-block; float:right;",  
+                                                                       downloadButton("dl_meta_biv_sub_sroc", "Download")),
+                                                      
+                                                              tags$div(style="display:inline-block; vertical-align:top; width:120px; float:right;",
+                                                                       radioButtons(inputId = "dl_meta_biv_sub_sroc_options",
+                                                                                    label = NULL,
+                                                                                    choices = c(".png", ".svg"),
+                                                                                    selected = ".png",
+                                                                                    inline = TRUE))),
+                                                              conditionalPanel(condition = "output.sub_roc_warning == false",
+                                                                               box(status = "warning",
+                                                                                   background = "orange",
+                                                                                   width = "80%",
+                                                                                   HTML("<i class='fa fa-exclamation-circle'></i> One of the categories for the selected covariate has less than 3 studies. The SROC curve cannot be computed."))
+                                                                              )
+                                                                  )
+                                                              )
+                                                          )
+                                                 ))
+                                                 ),
+                                        
+                                        tabPanel("Sensitivity analysis", 
+                                                 id = "meta_biv_sens_tab",
+                                                 value = "meta_biv_sens_tab",
+                                                 tags$hr(),
+                                                 fluidRow(
+                                                   column(width = 6,
+                                                          selectInput(inputId = "meta_biv_sens_covariate_select",
+                                                                      label = "Select a covariate to perform a sensitivity analysis:",
+                                                                      choices = "",
+                                                                      width = "100%"
+                                                                      )
+                                                          ),
+                                                   column(width = 6,
+                                                          selectInput(inputId = "meta_biv_sens_category_select",
+                                                                      label = "Select a category within the selected covariate to perform a sensitivity analysis:",
+                                                                      choices = "",
+                                                                      width = "100%"
+                                                                      )
+                                                          )
+                                                          ),
+                                                 
+                                                 fluidRow(
+                                                   column(width = 8,
+                                                          box(width = "100%",
+                                                              style = "overflow-x: scroll;",
+                                                              title = "Dataset",
+                                                              status = "success",
+                                                              solidHeader = TRUE,
+                                                              collapsible = TRUE,
+                                                              withSpinner(DT::dataTableOutput(outputId = "meta_biv_sens_data"), 
+                                                                          type = 6,
+                                                                          size = 0.5,
+                                                                          color = "#235779")
+                                                              )
+                                                          ),
+                                                   
+                                                   column(width = 4,
+                                                          box(width = "100%",
+                                                              style = "overflow-x: scroll;",
+                                                              title = "Summary statistics",
+                                                              status = "success",
+                                                              solidHeader = TRUE,
+                                                              collapsible = TRUE,
+                                                              conditionalPanel(condition = "output.bivariate_sensitivity == true",
+                                                              withSpinner(DT::dataTableOutput(outputId = "meta_biv_sens_summary"), 
+                                                                          type = 6,
+                                                                          size = 0.5,
+                                                                          color = "#235779"),
+                                                              tags$br(),
+                                                              tags$div(style="float:right;",
+                                                                       downloadButton("dl_meta_biv_sens_summary", "Download"))),
+                                                              conditionalPanel(condition = "output.bivariate_sensitivity == false",
+                                                                                      box(status = "warning",
+                                                                                          background = "orange",
+                                                                                          width = "80%",
+                                                                                          HTML("<i class='fa fa-exclamation-circle'></i> The selected data subset has less than 4 studies or did not achieve convergence for the bivariate model. Please select another data subset."))
+                                                                               )
+                                                              )
+                                                          )
+                                                          )
+                                                 )
+                                         )
+                             ),
+               
+                    tabPanel("Univariate model",
+                             id = "meta_univariate_tab",
+                             value = "meta_univariate_tab",
+                             
+                             fluidRow(
+                               column(width = 5,
+                                      box(width = "100%",
+                                          title = "Summary statistics (univariate)",
+                                          status = "success",
+                                          solidHeader = TRUE,
+                                          collapsible = TRUE,
+                                          withSpinner(DT::dataTableOutput(outputId = "meta_uni_stats_summary"), 
+                                                      type = 6,
+                                                      size = 0.5,
+                                                      color = "#235779"),
+                                          tags$br(),
+                                          tags$div(style="float:right;",
+                                                   downloadButton("dl_meta_uni_stats_summary", "Download"))
+                                      ),
+                                      
+                                      box(width = "100%",
+                                          title = "Heterogeneity (univariate)",
+                                          status = "success",
+                                          solidHeader = TRUE,
+                                          collapsible = TRUE,
+                                          withSpinner(DT::dataTableOutput(outputId = "meta_uni_stats_heterogen"), 
+                                                      type = 6,
+                                                      size = 0.5,
+                                                      color = "#235779"),
+                                          tags$br(),
+                                          tags$div(style="float:right;",
+                                                   downloadButton("dl_meta_uni_stats_heterogen", "Download"))
+                                      )
+                               ),
+                               
+                               column(width=7,
+                                      box(width = "100%",
+                                          style = "overflow-x: scroll;",
+                                          title = "Sensitivity Forest Plot",
+                                          status = "success",
+                                          solidHeader = TRUE,
+                                          collapsible = TRUE,
+                                          tags$div(align = "center",
+                                                   withSpinner(uiOutput("uni_forest_sen"),
+                                                               type = 6,
+                                                               size = 0.5,
+                                                               color = "#235779")),
+                                          tags$br(),
+                                          tags$div(style="display:inline-block; float:right;", 
+                                                   downloadButton("dl_uni_forest_sen", "Download")
+                                          ),
+                                          tags$div(style="display:inline-block; vertical-align:top; width:120px; float:right;",
+                                                   radioButtons(inputId = "dl_uni_forest_sen_options",
+                                                                label = NULL,
+                                                                choices = c(".png", ".svg"),
+                                                                selected = ".png",
+                                                                inline = TRUE)
+                                          )
+                                      ),
+                                      
+                                      box(width = "100%",
+                                          style = "overflow-x: scroll;",
+                                          title = "Specificity Forest Plot",
+                                          status = "success",
+                                          solidHeader = TRUE,
+                                          collapsible = TRUE,
+                                          tags$div(align = "center",
+                                                   withSpinner(uiOutput("uni_forest_spe"),
+                                                               type = 6,
+                                                               size = 0.5,
+                                                               color = "#235779")),
+                                          tags$br(),
+                                          tags$div(style="display:inline-block; float:right;", 
+                                                   downloadButton("dl_uni_forest_spe", "Download")
+                                          ),
+                                          tags$div(style="display:inline-block; vertical-align:top; width:120px; float:right;",
+                                                   radioButtons(inputId = "dl_uni_forest_spe_options",
+                                                                label = NULL,
+                                                                choices = c(".png", ".svg"),
+                                                                selected = ".png",
+                                                                inline = TRUE)
+                                          )
+                                      )
+                               )
+                             )
+                    ),
+                    
+                    tabPanel("HSROC model",
+                             id = "meta_hsroc_tab",
+                             value = "meta_hsroc_tab",
+                             tabsetPanel(type = "pills",
+                                         
+                                         tabPanel("Statistics",
+                                                  id = "meta_hsroc_stats_tab",
+                                                  tags$hr(),
+                                                  fluidRow(
+                                                    column(width = 4,
+                                                           box(width = "100%",
+                                                               title = "Summary statistics",
+                                                               status = "success",
+                                                               solidHeader = TRUE,
+                                                               collapsible = TRUE,
+                                                               tableOutput("meta_hsroc_stats_summary"),
+                                                               tags$div(style="float:right;",
+                                                                        downloadButton("dl_meta_hsroc_stats_summary", "Download"))
+                                                           )   
+                                                    ),
+                                                    
+                                                    column(width = 4,
+                                                           box(width = "100%",
+                                                               title = "RevMan parameters",
+                                                               status = "success",
+                                                               solidHeader = TRUE,
+                                                               collapsible = TRUE,
+                                                               tableOutput("meta_hsroc_stats_revman"),
+                                                               tags$div(style="float:right;",
+                                                                        downloadButton("dl_meta_hsroc_stats_revman", "Download"))
+                                                           )
+                                                    ),
+                                                    
+                                                    column(width = 4,
+                                                           box(width = "100%",
+                                                               title = "Heterogeneity",
+                                                               status = "success",
+                                                               solidHeader = TRUE,
+                                                               collapsible = TRUE,
+                                                               tableOutput("meta_hsroc_stats_heterogen"),
+                                                               tags$div(style="float:right;",
+                                                                        downloadButton("dl_meta_hsroc_stats_heterogen", "Download"))
+                                                           )
+                                                    )
+                                                  )
+                                         ),
+                                         
+                                         tabPanel("SROC curve", 
+                                                  id = "meta_hsroc_sroc_tab",
+                                                  tags$hr(),
+                                                  fluidRow(
+                                                    column(width = 8,
+                                                           box(width = "100%",
+                                                               title = "SROC curve",
+                                                               status = "success",
+                                                               solidHeader = TRUE,
+                                                               collapsible = TRUE,
+                                                               plotlyOutput("meta_hsroc_sroc_summary"),
+                                                               downloadButton("dl_meta_hsroc_sroc_summary", "Download")
+                                                           )   
+                                                    ),
+                                                    
+                                                    column(width = 4,
+                                                           box(width = "100%",
+                                                               title = "SROC display options",
+                                                               status = "success",
+                                                               solidHeader = TRUE,
+                                                               collapsible = TRUE,
+                                                               checkboxGroupInput(inputId = "meta_hsroc_sroc_options",
+                                                                                  label = "Select the features you would like to display:",
+                                                                                  choices = c("Ellipse" = 1,
+                                                                                              "Summary point" = 2,
+                                                                                              "Curve" = 3)
+                                                                                  )
+                                                               )
+                                                            )
+                                                            )
+                                                  )
+                                         )
+                             )
+               )
+               ),
+        
       
-      # REFERENCES
-      tabItem(tabName = "ref",
-              h2("References"),
-              tags$ol(type = "1",
-                      tags$li("Zamora, J., Abraira, V., Muriel, A., Khan, K., & Coomarasamy, A. (2006). Meta-DiSc: a software for meta-analysis of test accuracy data. BMC medical research methodology, 6, 31. doi:10.1186/1471-2288-6-31"),
-                      tags$li("Douglas Bates, Martin Maechler, Ben Bolker, Steve Walker (2015). Fitting Linear Mixed-Effects Models Using lme4. Journal of Statistical Software, 67(1), 1-48.<doi:10.18637/jss.v067.i01>.")
-              ), 
+      # SUMMARY OF FINDINGS
+      tabItem(tabName = "sumfind_tab",
+              box(width = 9,
+              fluidRow(
+                column(width = 6,
+                      numericInput("prevalence", "Prevalence (%):",
+                              value = 50)),
+                column(width = 6, 
+                       numericInput("patients", "Size of the cohort:",
+                             value = 100)))
+              ),
+              fluidRow(
+                column(width = 12,
+                       box(width = 9,
+                           style = "overflow-x: scroll;",
+                           collapsible = TRUE,
+                           
+                           conditionalPanel(condition = "output.sumfind_table_error == true",
+                                            HTML('<p><strong><span style="color: rgb(209, 72, 65);">Error:</span></strong><span style="color: rgb(209, 72, 65);"> Please check that values for both inputs are correct. Prevalence &nbsp;must be a <strong>number</strong> <strong>between 0 and 100</strong>, while the cohort size must be a<strong>&nbsp;number greater than or equal to 0</strong>. Decimals are indicated by a <strong>dot</strong>.</span></p>')),
+                           
+                           conditionalPanel(condition = "output.sumfind_table_error == false",
+                           
+                             tags$div(align = "center", 
+                                      withSpinner(plotOutput("sumfind_table", width = "700px", height = "600px"),
+                                                  type = 6,
+                                                  size = 0.5,
+                                                  color = "#235779")),
+                             tags$br(),
+                             tags$div(style="display:inline-block; float:right;", 
+                                      downloadButton("dl_sumfind", "Download")
+                             ),
+                             tags$div(style="display:inline-block; vertical-align:top; width:120px; float:right;",
+                                      radioButtons(inputId = "dl_sumfind_options",
+                                                   label = NULL,
+                                                   choices = c(".png", ".svg"),
+                                                   selected = ".png",
+                                                   inline = TRUE))
+                           )
+                           )
+                       )
+                )
+              ),
+        
               
-              br(), br(),
-              h2("Packages used"),
-              tags$ul(
-                      tags$li("shiny"),
-                      tags$li("shiydashboard"),
-                      tags$li("plotly"),
-                      tags$li("DT"),
-                      tags$li("shiythemes"),
-                      tags$li("shinycssloaders"),
-                      tags$li("ggplot2"),
-                      tags$li("rsconnect"),
-                      tags$li("ggsci"),
-                      tags$li("shinyWidgets"),
-                      tags$li(""),
-                      )
+      # REFERENCES
+      tabItem(tabName = "user_tab",
+              h3("Video tutorial"),
+              HTML('<iframe width="560" height="315" src="https://www.youtube.com/embed/vxc-oYpdEBs" title="MetaDiSc2.0 Tutorial" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>'),
+              tags$br(),
+              h3("References"),
+              tags$ol(type = "1",
+                      tags$li("Chu H, Cole SR. Bivariate meta-analysis of sensitivity and specificity with sparse data: a generalized linear mixed model approach. J Clin Epidemiol. 2006;59(12):1331-2."), 
+                      tags$li("Bates D, Maechler M, Bolker B, Walker S. Fitting Linear Mixed-Effects Models Using lme4. Journal of Statistical Software. 2015;67(1):1-48."), 
+                      tags$li("Plana MN, Pérez T, Zamora J. New measures improved the reporting of heterogeneity in diagnostic test accuracy reviews: a metaepidemiological study. J Clin Epidemiol. 2021;131:101-112."), 
+                      tags$li("Reitsma JB, Glas AS, Rutjes AWS, Scholten RJPM, Bossuyt PM, Zwinderman AH. Bivariate analysis of sensitivity and specificity produces informative summary measures in diagnostic reviews. J Clin Epidemiol. 2005;58(10):982–90."), 
+                      tags$li("Zamora J, Abraira V, Muriel A, Khan K, Coomarasamy A. Meta-DiSc: a software for meta-analysis of test accuracy data. BMC Med Res Methodol. 2006;6:31."), 
+                      tags$li("Zhou Y, Dendukuri N. Statistics for quantifying heterogeneity in univariate and bivariate meta-analyses of binary data: The case of meta-analyses of diagnostic accuracy. Stat Med. 2014;33(16):2701–17.")
+              )
+              
       )
       
       )
   )
-    ), #end dashboardPage
-  tags$footer("Meta-DiSc 2.0, 2019.", align = "center", style = "
+  ),
+  tags$footer("Meta-DiSc 2.0, 2021.", align = "center", style = "
               position:fixed;
               bottom:0;
               width:100%;
-              height:5%;
-              color: white;
-              padding: 10px;
-              background-color: #686A6F;
-              z-index: 1000;
+              height:3%;
+              color:white;
+              padding:2px;
+              background-color:#686A6F;
+              z-index:1000;
               ")
-  )
-)
-  
-  
-  ## 
-  ## 
-  ## END UI
-  
+  ))

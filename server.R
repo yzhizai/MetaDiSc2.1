@@ -1,967 +1,1753 @@
+source("funciones_050922.R")
+library(svglite)
+library(rsconnect)
+library(devtools)
+library(shinyvalidate)
 
-library(shiny)
-library(plyr)
-library(lmtest)
-library(rclipboard)
-source("funciones.R")
+# ----------------------------------------------------------------------------------------------- #
 
-
-# START OF SERVER LOGIC
 shinyServer(function(input, output, session) {
-   
   
+# ----------------------------------------------------------------------------------------------- #
+  
+  #### LANDING PAGE: ####
+  
+  set.seed(122)
+  histdata <- rnorm(500)
+  observeEvent(once = TRUE, ignoreNULL = FALSE, ignoreInit = FALSE, eventExpr = histdata, {
+    # event will be called when histdata changes, which only happens once, when it is initially calculated.
+    showModal(modalDialog(HTML('<h1 style="text-align: center;">Welcome to Meta-DiSc 2.0!</h1>
+                                 <hr style="height:1px;border-width:0;background-color:black">
+                                 <p>Meta-DiSc 2.0 is freeware software to perform Meta-analysis of studies of Diagnostic Test Accuracy</p>
+                                 <ul>
+                                 <li>Performs statistical pooling of sensitivities, specificities, likelihood ratios and diagnostic odds ratios using current recommendations by means of a bivariate random effects model</li>
+                                 <li>It allows to explore sources of heterogeneity using subgroup and meta-regression analysis</li>
+                                 <li>It computes several measures of heterogeneity to help reviewers to further describe between studies variations</li>
+                                 <li>All computational algorithms have been validated through comparison with different statistical tools and published meta-analyses</li>
+                                 </ul>
+                                 <p>This application is the &ldquo;highly-expected&rdquo; update of the previous version of Meta-DiSc software</p>
+                                 <p>The update has been led by the Clinical Biostatistics Unit of the Ramon y Cajal Research Institute (IRYCIS)</p>
+                                 <p>&nbsp;</p>
+                                 <button type="button" class="btn btn-default" data-dismiss="modal" style="background-color:#555555; color:white; position: relative; left:44%; font-size: 16px; padding: 12px 28px;">OK!</button>
+                                 <hr style="height:1px;border-width:0;background-color:black">
+                                 <table style="height: 120px; margin-left: auto; margin-right: auto;" width="100%">
+                                 <tbody>
+                                 <tr>
+                                 <td style="width: 31%;"><img src="IRYCIS-logo.png" alt="" width="80%" height=auto /></td>
+                                 <td style="width: 26%;"><img src="CIBERESP-logo.png" alt="" width="80%" height=auto /></td>
+                                 <td style="width: 22%;"><img src="UCM-logo.png" alt="" width="80%" height=auto /></td>
+                                 <td style="width: 22%;"><img src="UPM-logo.png" alt="" width="80%" height=auto /></td>
+                                 </tr>
+                                 </tbody>
+                                 </table>
+                                 <p>&nbsp;</p>')
 
+    ))
+  })
   
-  rv = reactiveValues()
+  
+  # ----------------------------------------------------------------------------------------------- #
+  
+  #### FILE UPLOAD: ####
+  
+  ## The "values" variable: ##
+  
+  # "values" stores the state of the "file_upload" input. 
+  values <- reactiveValues(
+    upload_state = NULL # It is by default set to NULL.
+  )
+  # If the user uploads a file, its state changes (due to the "observeEvent" environment) to "uploaded".
+  observeEvent(input$file_upload, {
+    values$upload_state <- "uploaded"
+  })
+  # If the user loads the example dataset.
+  observeEvent(input$ex_dataset, {
+    values$upload_state <- "example"
+  })
+  # If the user presses the reset button, its state changes to "reset" and the "file_upload" input is is emptied.
+  observeEvent(input$file_reset, {
+    values$upload_state <- "reset"
+    shinyjs::reset("file_upload")
+  })
+  
+  # ---------------------------------------------------- #
+  
+  ## These "values" states are used to determine the value of the "data" variable.
+  ## The "data" variable and file upload error checking: ##
+  
+  # "data" is the variable that stores the input file (if there is any).
+  data <- reactive({
+
+    # If the file hasn't been uploaded ("values" state = NULL), then "data" = NULL:
+    if (is.null(values$upload_state)) {
+      return(NULL)
+    }
+    
+    # If the user loads the example dataset:
+    else if (values$upload_state == "example"){
+      return(dataset_colnames(as.data.frame(read_excel("./data/example.xlsx", na = "NA"))))
+    }
+    
+    # If the file has been uploaded ("values" state = "uploaded"): 
+    else if (values$upload_state == "uploaded") {
+      
+      # And the user has selected the ".xlsx" option:
+      if (input$file_upload_options1 == ".xlsx") {
+        
+        # The file extension is checked to ensure that it corresponds to the selected format:
+        if (tools::file_ext(input$file_upload)[1] == "xlsx" | tools::file_ext(input$file_upload)[1] == "xls") {
+          # The file is read, modified using the "dataset_colnames" function 
+          # defined in the "funciones.R" file, and stored in "data_check": 
+          data_check <- dataset_colnames(as.data.frame(read_excel(input$file_upload$datapath, na = "NA")))
+          
+          # If the uploaded dataset contains all the necessary columns, the ids are not repeated, 
+          # it contains more than one study and the number of studies that do NOT lack diseased 
+          # and/or non-diseased patients is less than 2, then "data <- data_check". 
+          # If not, various error messages are displayed to tell the user what the problem was, 
+          # and the application is returned to its "reset" state:
+          if(length(setdiff(c("id", "tp", "tn", "fp", "fn"), colnames(data_check))) == 0) {
+            if (nrow(data_check)==length(unique(data_check$id))){
+              if (nrow(data_check)>1){
+                if (length(which(dataset_XYZ(data_check)$X_uni$n0==0))+length(which(dataset_XYZ(data_check)$X_uni$n1==0)) >= nrow(data_check)-1){
+                  error_mess <- HTML("The number of studies that do NOT lack diseased and/or non-diseased patients is less than 2, thus no analysis can be performed. Please check the data or choose another dataset.")
+                  showNotification(error_mess, type = "error", duration = 30) 
+                  values$upload_state <- "reset"
+                  shinyjs::reset("file_upload")
+                  return(NULL)
+                }
+                else{
+                  return(data_check)
+                }
+              }
+              else{
+                error_mess <- HTML("Error: data contains less than 2 studies. <br/> Please upload a dataset with more than 1 study.")
+                showNotification(error_mess, type = "error", duration = 10) 
+                values$upload_state <- "reset"
+                shinyjs::reset("file_upload")
+                return(NULL)
+              }
+            }
+            else{
+              error_mess <- HTML("Error: two or more studies have the same ID. <br/> Please make sure that no ID is repeated.")
+              showNotification(error_mess, type = "error", duration = 10) 
+              values$upload_state <- "reset"
+              shinyjs::reset("file_upload")
+              return(NULL)
+            }
+          }
+          else {
+            error_mess <- HTML(paste0("Error! <br/> The following colmuns are missing: ", toString(setdiff(c("id", "tp", "tn", "fp", "fn"), colnames(data_check))), ". <br/> Please upload a valid dataset."))            
+            showNotification(error_mess, type = "error", duration = 10) 
+            values$upload_state <- "reset"
+            shinyjs::reset("file_upload")
+            return(NULL)
+          }
+        }
+        
+        # If the file extension does not correspond to the selected format, 
+        # an error message is displayed prompting the user to select the correct format,
+        # and the application is returned to its "reset" state:
+        else {
+          showNotification(HTML("Error: Incorrect file format. <br/> Please make sure that the selected format corresponds to the the uploaded file"), type = "error", duration = 10)
+          values$upload_state <- "reset"
+          shinyjs::reset("file_upload")
+          return(NULL)
+        }
+      }
+      
+      # If the user has selected the ".csv" option:
+      else if (input$file_upload_options1 == ".csv") {
+        
+        # The file extension is checked to ensure that it corresponds to the selected format:
+        if (tools::file_ext(input$file_upload)[1] == "csv") {
+          if (input$file_upload_options2 == "Comma"){
+            # The file is read, modified using the "dataset_colnames" function 
+            # defined in the "funciones.R" file, and stored in "data_check": 
+            data_check <- dataset_colnames(read.csv(input$file_upload$datapath, sep = ","))
+            
+            # If the uploaded dataset contains all the necessary columns, the ids are not repeated, 
+            # it contains more than one study and the number of studies that do NOT lack diseased 
+            # and/or non-diseased patients is less than 2, then "data <- data_check". 
+            # If not, various error messages are displayed to tell the user what the problem was, 
+            # and the application is returned to its "reset" state:
+            if(length(setdiff(c("id", "tp", "tn", "fp", "fn"), colnames(data_check))) == 0) {
+              if (nrow(data_check)==length(unique(data_check$id))){
+                if (nrow(data_check)>1){
+                  if (length(which(dataset_XYZ(data_check)$X_uni$n0==0))+length(which(dataset_XYZ(data_check)$X_uni$n1==0)) >= nrow(data_check)-1){
+                    error_mess <- HTML("The number of studies that do NOT lack diseased and/or non-diseased patients is less than 2, thus no analysis can be performed. Please check the data or choose another dataset.")
+                    showNotification(error_mess, type = "error", duration = 30) 
+                    values$upload_state <- "reset"
+                    shinyjs::reset("file_upload")
+                    return(NULL)
+                  }
+                  else{
+                    return(data_check)
+                  }
+                }
+                else{
+                  error_mess <- HTML("Error: data contains less than 2 studies. <br/> Please upload a dataset with more than 1 study.")
+                  showNotification(error_mess, type = "error", duration = 10) 
+                  values$upload_state <- "reset"
+                  shinyjs::reset("file_upload")
+                  return(NULL)
+                }
+              }
+              else{
+                error_mess <- HTML("Error: two or more studies have the same ID. <br/> Please make sure that no ID is repeated.")
+                showNotification(error_mess, type = "error", duration = 10) 
+                values$upload_state <- "reset"
+                shinyjs::reset("file_upload")
+                return(NULL)
+              }
+            }
+            else {
+              error_mess <- HTML(paste0("Error! <br/> The following colmuns are missing: ", toString(setdiff(c("id", "tp", "tn", "fp", "fn"), colnames(data_check))), ". <br/> Please upload a valid dataset."))
+              showNotification(error_mess, type = "error", duration = 10) 
+              values$upload_state <- "reset"
+              shinyjs::reset("file_upload")
+              return(NULL)
+            }
+          }
+          
+          # Here the same operations are performed but in the case that the delimiter is a semicolon:
+          else if (input$file_upload_options2 == "Semicolon") {
+            data_check <- dataset_colnames(read.csv(input$file_upload$datapath, sep = ";"))
+            if(length(setdiff(c("id", "tp", "tn", "fp", "fn"), colnames(data_check))) == 0) {
+              if (nrow(data_check)==length(unique(data_check$id))){
+                if (nrow(data_check)>1){
+                  if (length(which(dataset_XYZ(data_check)$X_uni$n0==0))+length(which(dataset_XYZ(data_check)$X_uni$n1==0)) >= nrow(data_check)-1){
+                    error_mess <- HTML("The number of studies that do NOT lack diseased and/or non-diseased patients is less than 2, thus no analysis can be performed. Please check the data or choose another dataset.")
+                    showNotification(error_mess, type = "error", duration = 30) 
+                    values$upload_state <- "reset"
+                    shinyjs::reset("file_upload")
+                    return(NULL)
+                  }
+                  else{
+                    return(data_check)
+                  }
+                }
+                else{
+                  error_mess <- HTML("Error: data contains less than 2 studies. <br/> Please upload a dataset with more than 1 study.")
+                  showNotification(error_mess, type = "error", duration = 10) 
+                  values$upload_state <- "reset"
+                  shinyjs::reset("file_upload")
+                  return(NULL)
+                }
+              }
+              else{
+                error_mess <- HTML("Error: two or more studies have the same ID. <br/> Please make sure that no ID is repeated.")
+                showNotification(error_mess, type = "error", duration = 10) 
+                values$upload_state <- "reset"
+                shinyjs::reset("file_upload")
+                return(NULL)
+              }
+            }
+            else {
+              error_mess <- HTML(paste0("Error! <br/> The following colmuns are missing: ", toString(setdiff(c("id", "tp", "tn", "fp", "fn"), colnames(data_check))), ". <br/> Please upload a valid dataset."))              
+              showNotification(error_mess, type = "error", duration = 10) 
+              values$upload_state <- "reset"
+              shinyjs::reset("file_upload")
+              return(NULL)
+            }
+          }
+        }
+        
+        # If the file extension does not correspond to the selected format, 
+        # an error message is displayed prompting the user to select the correct format,
+        # and the application is returned to its "reset" state:
+        else {
+          showNotification(HTML("Error: Incorrect file format. <br/> Please make sure that the selected format corresponds to the imported file format"), type = "error", duration = 10)
+          values$upload_state <- "reset"
+          shinyjs::reset("file_upload")
+          return(NULL)
+        }
+      }
+    }
+    
+    # If the reset button has been pressed ("values" state = "reset"), then "data = NULL" again:
+    else if (values$upload_state == "reset") {
+      return(NULL)
+    }
+  })
+  
+  # ---------------------------------------------------- #
+  
+  ## Enable or disable the delimiter options: ##
+  
+  # If the selected file type is not .csv, choosing a delimiter is not allowed:
+  observeEvent(input$file_upload_options1, {
+    if(input$file_upload_options1 == ".xlsx"){
+      shinyjs::disable(id = "file_upload_options2")
+    } else {
+      shinyjs::enable(id = "file_upload_options2")
+    }
+  })
+  
+  # ---------------------------------------------------- #
+  
+  ## Reset selected tabs: ##
+  
+  # If the user uploads a new dataset or presses the "Reset" button,
+  # the different tabs are returned to their original state:
+  observeEvent({
+    input$file_reset
+    input$file_upload}, {
+    
+      # Forest plots tab:
+      updateTabsetPanel(session, "graph_tabbox",
+                        selected = "graph_forest_plots_tab")
+      # Bivariate tab:
+      updateTabsetPanel(session, "meta_tabbox",
+                        selected = "meta_biv_tab")
+      # Statistics tab:
+      updateTabsetPanel(session, "meta_biv_tabset",
+                        selected = "meta_biv_stats_tab")
+      
+      # Summary statistics tab (in subgroup analysis):
+      updateTabsetPanel(session, "subgroup_tabbox",
+                        selected = "meta_biv_sub_summary_stats_tab")
+    })
+  
+  # ---------------------------------------------------- #
+  
+  ## Resulting output: ##
+  
+  # Text output when no file has been uploaded.
+  # If "data" is NULL (which means that the file hasn't been uploaded or the reset button has been pressed), 
+  # "output$file_not_uploaded" is TRUE (which enables the conditional panel in the ui.R file, 
+  # containing file upload instructions, to show up):
+  output$file_not_uploaded <- reactive({
+    return(is.null(data()))
+  })
+  outputOptions(output, 'file_not_uploaded', suspendWhenHidden=FALSE)
+  
+  # Table output with the user's data in it.
+  # When the file has been loaded, "data" is a dataframe which can be rendered with "DT::renderDataTable"
+  # ("output$file_not_uploaded" is FALSE enabling the corresponding conditional panel to show up):
+  output$file_table <- DT::renderDataTable({
+    if (!is.null(data())){
+      DT::datatable(data(), options = list(columnDefs = list(list(className = 'dt-center', targets = 2:ncol(data())-1)), # center align all columns except first.
+                                           lengthMenu = c(5, 10, 25, 50), # options for the number of rows that can be displayed at a time.
+                                           pageLength = 10, # number of rows by default.
+                                           orderClasses = TRUE), # shade the column in which the data is sorted by.
+                                           rownames = FALSE) # display the row identifier.
+    }
+  })
   
   
-  combinations <-  data.frame("Models" = c("A", "B", "C", "D", "E (B')", "F (B')", "G (B')", "H (C')", "I (C')", "J (C')", "K (D')", "L (D')", "M (D')"),
-                              "sen" = c("x", "", "", "", "", "", "", "", "", "", "", "", ""),
-                              "spe" = c("x", "", "", "", "", "", "", "", "", "", "", "", ""),
-                              "sen_0" = c("", "x", "", "x", "x", "x", "x", "", "", "", "x", "x", "x"),
-                              "spe_0" = c("", "x", "x", "", "x", "x", "x", "x", "x", "x", "", "", ""),
-                              "sen_1" = c("", "x", "", "x", "x", "x", "x", "", "", "", "x", "x", "x"),
-                              "spe_1" = c("", "x", "x", "", "x", "x", "x", "x", "x", "x", "", "", ""),
-                              "var_sen_0" = c("", "", "", "", "x", "x", "", "x", "x", "", "x", "x", ""),
-                              "var_spe_0" = c("", "", "", "", "x", "", "x", "x", "", "x", "x", "", "x"),
-                              "var_sen_1" = c("", "", "", "", "x", "x", "", "x", "x", "", "x", "x", ""),
-                              "var_spe_1" = c("", "", "", "", "x", "", "x", "x", "", "x", "x", "", "x")
+  # ----------------------------------------------------------------------------------------------- #
+
+  #### FILE UPLOAD - DATASET SUMMARY: ####
+  
+  ## The "summary" variable: ##
+  
+  # "summary" is the variable that stores the summary table.
+  summary <- reactive({
+    
+    # if the file hasn't been uploaded, "summary = NULL":
+    if (is.null(data())) {
+      return(NULL)
+    }
+    # else (if the file has been uploaded), 
+    # the "dataset_summary" function is applied to the user's data:
+    else {
+      return(dataset_summary(data())) 
+    }
+  })
+  
+  ## Table output with the summary table: ##
+  
+  output$file_dataset_summary <- DT::renderDataTable({
+    DT::datatable(summary(), rownames = FALSE, options = list(columnDefs = list(list(className = 'dt-center', targets = 1)), 
+                                                              paging = FALSE, # table pagination.
+                                                              searching = FALSE, # search (filtering) abilities.
+                                                              info = FALSE, # information display field.
+                                                              ordering = FALSE # ordering (sorting) abilities.
+                  ))
+  })
+  
+  ## Downloading the data summary table: ##
+  
+  output$dl_data_summary <- downloadHandler(
+    filename = function() {
+      if (values$upload_state == "example") {
+        paste("example_dataset", "summary.csv", sep = "_") 
+      } else {
+        paste(tools::file_path_sans_ext(input$file_upload), "summary.csv", sep = "_") # Name of the downloaded file ("tools::file_path_sans_ext" removes extensions).
+      }
+    },
+    content = function(file) {
+      write.csv(summary(), file, row.names = FALSE) # The table is written as a .csv file.
+    }
+  )
+  
+  # ---------------------------------------------------- #
+  
+  ## Warning message when one or more studies have n0=0 or n1=0: ##
+  
+  senspe0 <- reactive({
+    if (is.null(data())) {
+      return(FALSE)
+    }
+    else if (length(which(dataset_XYZ(data())$X_uni$n0==0))+length(which(dataset_XYZ(data())$X_uni$n1==0)) > 0){
+      return(TRUE)
+    }
+    else {
+      return(FALSE)
+    }
+  })
+  
+  # The "senspe0_warning" output enables (when TRUE) the conditional panel in the ui.R file
+  # to show up, displaying the corresponding warning message ("senspe0_message"):
+  output$senspe0_warning <- reactive({
+    return(senspe0())
+  })
+  outputOptions(output, 'senspe0_warning', suspendWhenHidden=FALSE)
+  
+  # The message that is printed on the screen when one or more studies have n0=0 or n1=0.
+  # "renderUI" is used together with "htmltools::HTML" to be able to customize 
+  # the appearance of the message, add icons, etc. (via HTML script).
+  output$senspe0_message <- renderUI({
+    if (is.null(data())==FALSE) {
+      senspe0_list <- dataset_XYZ(data())$X_uni$id[dataset_XYZ(data())$X_uni$n0==0|dataset_XYZ(data())$X_uni$n1==0]
+      HTML(paste0('<i class="fa fa-exclamation-circle"></i> ', "The following studies lack diseased and/or non-diseased patients, and therefore will not be taken into account in subsequent analyses: ", paste(senspe0_list, collapse=', ')))
+    }
+  })
+  
+  # ----------------------------------------------------------------------------------------------- #
+  
+  #### FILE UPLOAD - DISABLING SIDEBAR: ####
+  
+  # All tabs except the initial tab and the user guide are disabled 
+  # when no dataset has been loaded:
+  observe({
+    if (is.null(data())){
+      addCssClass(selector = "a[data-value='graph_tab']", class = "inactiveLink1")
+      addCssClass(selector = "a[data-value='meta_tab']", class = "inactiveLink1")
+      addCssClass(selector = "a[data-value='sumfind_tab']", class = "inactiveLink1")
+    }
+    else{
+      removeCssClass(selector = "a[data-value='graph_tab']", class = "inactiveLink1")
+      removeCssClass(selector = "a[data-value='meta_tab']", class = "inactiveLink1")
+      removeCssClass(selector = "a[data-value='sumfind_tab']", class = "inactiveLink1")
+    }
+  })
+  
+  # ----------------------------------------------------------------------------------------------- #
+
+  #### GRAPHICAL DESCRIPTION - COVARIATE SELECTION: ####
+  
+  ## The "covariate_selection" variable: ##
+  
+  # "covariate_selection" stores the names of all covariates plus an additional empty option 
+  # (in case the user does not want to select any covariate).
+  covariate_selection <- reactive({
+    if (is.null(data())) {
+      return(NULL)
+    }
+    else {
+      not_covariates <- c("tp", "fp", "fn", "tn", "id") # columns that are not covariates.
+      covariate_names <- names(data()[, !names(data()) %in% not_covariates, drop = F]) # names of the covariates.
+      covariate_names_select <- c("-", covariate_names) # names of the covariates plus the empty option, "-".
+      return(covariate_names_select)
+    }
+  })
+  
+  ## Drop-down menu contents: ##
+  
+  # The content of the "graph_covariate_select" drop-down menu is modified 
+  # by adding the choices within the "covariate_selection" variable 
+  # (all the covariates and the additional empty option):
+  observe({
+    updateSelectInput(session, "graph_covariate_select",
+                      choices = covariate_selection()
+    )})
+  
+  
+  ## Selected covariate: ##
+  
+  # The "covariate_selected" variable stores the name of the covariable selected 
+  # by the user in the "graph_covariate_select" drop-down menu.
+  covariate_selected <- reactive({
+    return(input$graph_covariate_select)
+  })
+  
+  
+  # ----------------------------------------------------------------------------------------------- #
+  
+  #### GRAPHICAL DESCRIPTION - FOREST PLOTS: ####
+  
+  ## Sensitivity ##
+  
+  # Variable that stores the sensitivity forest plot:
+  forest_sen <- reactive({
+    if (is.null(data())) {
+      return(NULL)
+    }
+    else {
+      return(forest_plot_sen(data(), covariate_selected()))
+    }
+  })
+  
+  # The height of the plot is adjusted according to the number of studies and rendered.
+  output$graph_forest_sen <- renderUI({
+    plotOutput("sen", height = 130+15*nrow(data())+15*length(unique(data()[1:nrow(data()),covariate_selected()])))
+  })
+  output$sen <- renderPlot({
+    forest_sen()
+  })
+  
+  ## Downloading the sensitivity forest plot: ##
+
+  output$dl_graph_forest_sen <- downloadHandler(
+    filename = function(){
+      if (values$upload_state == "example") {
+        paste("example_dataset", paste("sensitivity_forest_plot", input$dl_forest_sen_options, sep = ""), sep = "_") 
+      } else {
+        paste(tools::file_path_sans_ext(input$file_upload), paste("sensitivity_forest_plot", input$dl_forest_sen_options, sep = ""), sep = "_") 
+      }
+    },
+    content = function(file){
+      # Downlading a .png file:
+      if (input$dl_forest_sen_options == ".png") {
+        png(file, width = 1500, height = 350+37.5*nrow(data())+37.5*length(unique(data()[1:nrow(data()),covariate_selected()])), units = "px", res = 180)
+      }
+      # Downlading a .svg file:
+      else if (input$dl_forest_sen_options == ".svg") {
+        svg(file, width = 10, height = 12+0.2*nrow(data()))
+      }  
+      forest_plot_sen(data(), covariate_selected())
+      dev.off()
+    }
+  )
+  
+  # ---------------------------------------------------- #
+
+  ## Specificity ##
+  
+  # Variable that stores the specificity forest plot:
+  forest_spe <- reactive({
+    if (is.null(data())) {
+      return(NULL)
+    }
+    else {
+      return(forest_plot_spe(data(), covariate_selected()))
+    }
+  })
+
+  # The height of the plot is adjusted according to the number of studies and rendered.
+  output$graph_forest_spe <- renderUI({
+    plotOutput("spe", height = 130+15*nrow(data())+15*length(unique(data()[1:nrow(data()),covariate_selected()])))
+  })
+  output$spe <- renderPlot({
+    forest_spe()
+  })
+  
+  ## Downloading the specificity forest plot: ##
+  
+  output$dl_graph_forest_spe <- downloadHandler(
+    filename = function(){
+      if (values$upload_state == "example") {
+        paste("example_dataset", paste("specificity_forest_plot", input$dl_forest_spe_options, sep = ""), sep = "_") 
+      } else {
+        paste(tools::file_path_sans_ext(input$file_upload), paste("specificity_forest_plot", input$dl_forest_spe_options, sep = ""), sep = "_") 
+      }
+    },
+    content = function(file){
+      # Downlading a .png file:
+      if (input$dl_forest_spe_options == ".png") {
+        png(file, width = 1500, height = 350+37.5*nrow(data())+37.5*length(unique(data()[1:nrow(data()),covariate_selected()])), units = "px", res = 180)
+      }
+      # Downlading a .svg file:
+      else if (input$dl_forest_spe_options == ".svg") {
+        svg(file, width = 10, height = 12+0.2*nrow(data()))
+      }  
+      forest_plot_spe(data(), covariate_selected())
+      dev.off()
+    }
   )
   
   
-  output$combinations <- renderTable(
-    combinations, align = 'c', striped = TRUE, bordered = T, spacing = "s")
+  # ----------------------------------------------------------------------------------------------- #
   
-    
+  #### GRAPHICAL DESCRIPTION - ROC PLANE: ####
   
-  # CSV FILE AS INPUT
-  observeEvent(input$file1, ({
-    rv$datos = read.csv(input$file1$datapath)
-   
+  # Variable that stores the forest plot:
+  roc_plane <- reactive({
+    if (is.null(data())) {
+      return(NULL)
+    }
+    else {
+      return(roc_plane_func(data(), covariate_selected(), input$graph_roc_ci_display))
+    }
+  })
+  
+  ## Rendering the plot: ##
+  
+  output$graph_roc <- plotly::renderPlotly({
+    if (covariate_selected() != "-"){
+    ggplotly(roc_plane(), tooltip = "text", height = 600, width = 600) %>% # The plot is transformed into a plotly object.
+             layout(legend = list(x = 0.82, y = 0.05)) %>% # To set the position of the legend.
+             config(displayModeBar = F)} # This hides the plotly embedded menu (known as modebar). 
+    else {
+      ggplotly(roc_plane(), tooltip = "text", height = 600, width = 600) %>% 
+              config(displayModeBar = F)} 
+  })
+  
+  ## Downloading the plot: ##
+
+  # An "observe" environment is initialized to perform different actions 
+  # depending on what the user has selected as file format option (.png or .svg): 
+  observe({
     
-    colnames(rv$datos) = tolower(colnames(rv$datos))
-    
-    if (!c("id", "tp", "tn", "fn", "fp") %in% colnames(rv$datos)){
-      showModal(modalDialog("Required columns are missing"))
-      return()
+    # Downlading a .png file:
+    if (input$dl_graph_roc_options == ".png") {
+      output$dl_graph_roc <- downloadHandler(
+        filename = function(){
+          if (values$upload_state == "example") {
+            paste("example_dataset", "ROC_plane.png", sep = "_") 
+          } else {
+            paste(tools::file_path_sans_ext(input$file_upload), "ROC_plane.png", sep = "_") 
+          }
+        },
+        content = function(file) {
+          ggsave(file, plot = roc_plane(), device = "png", width = 6.5, height = 6.5) 
+        })
     }
     
-    if (!grep("id", colnames(rv$datos)))
-    {
-      showNotification("Error: The data does not contain a 'ID' column", type = "error")
-      return()
-    } else if (!grep("tp", colnames(rv$datos)))
-    {
-      showNotification("Error: The data does not contain a 'TP' column", type = "error")
-      return()
-    } else if (!grep("tn", colnames(rv$datos)))
-    {
-      showNotification("Error: The data does not contain a 'TN' column", type = "error")
-      return()
-    } else if (!grep("fp", colnames(rv$datos)))
-    {
-      showNotification("Error: The data does not contain a 'FP' column", type = "error")
-      return()
-    } else if (!grep("fn", colnames(rv$datos)))
-    {
-      showNotification("Error: The data does not contain a 'FN' column", type = "error")
-      return()
-    } 
-    
-    output$DataImport = DT::renderDataTable({
-      datatable(rv$datos, rownames = F
-                # ,
-                # extensions = c("Buttons", "Select"),
-                # options = list(
-                #   select = TRUE,
-                #   dom = "Bfrtip",
-                #   buttons = list(
-                #     list(
-                #       extend = "copy",
-                #       text = "Copy",
-                #       exportOptions = list(modifier = list(selected=TRUE))
-                #     )
-                #   )
-                # )
-                )
-    }, server = TRUE)
-    
-
-    
-  }))
-  
-  
-  
-  observeEvent(input$Apply, ({
-    if (is.null(rv$datos))
-    {
-      showNotification("Error: Not file loaded", type = "error")
-      return()
-    } 
-    
-    
-    withProgress(message = "Performing Analysis", {
-      
-      datos <- rv$datos[input$DataImport_rows_all, ]
-      
-
-      
-      #selection of covariates
-      select_subgroup <- reactiveValues() 
-      select_subgroup <- colnames(datos %>% select(-c("id","tp","fp","tn","fn")))
-      updateSelectInput(session, "subgroups_list", choices = select_subgroup)
-      
-      updateSelectInput(session, "covariates_list", choices = select_subgroup)
-      
-      X = rv$datos[input$DataImport_rows_all, ] %>% mutate(
-          n1 = tp + fn,
-          n0 = fp + tn,
-          true1 = tp,
-          true0 = tn,
-          study = 1:nrow(rv$datos)
-      )
-      
-      colnames(X) <- tolower(colnames(X))
-      X$id <-  make.names(X$id, unique = T, allow_ = F)
-      
-      
-      
-      #selection of studies
-      selection_studies <-  reactiveValues() 
-      selection_studies <-  X$id
-      updateCheckboxGroupInput(session, "studies_list", choices = selection_studies, selected = c(selection_studies))
-      
-      
-      ## STUDY-LEVEL OUTCOME
-      ##
-      
-      X2 <- rv$datos[input$DataImport_rows_all, ] %>% mutate(
-        n1 = tp + fn,
-        n0 = fp + tn,
-        pos = tp + fp,
-        neg = fn + tn,
-        sens = round(tp/n1,3),
-        spec = round(tn/n0,3)
-      )
-      
-      output$slevelTable <- DT::renderDataTable(datatable(X2 %>% select(id, tp, fp, fn, tn, n1, n0, pos, neg, sens, spec)))
-      
-      output$downloadData1 <-  downloadHandler(
+    # Downlading a .svg file:
+    if (input$dl_graph_roc_options == ".svg") {
+      output$dl_graph_roc <- downloadHandler(
         filename = function(){
-          paste('study-level', Sys.Date(), '.csv', sep = '')
-        },
-        content = function(con){
-          write.csv(X2, con)
-        }
-      )
-      
-
-      
-      
-      ###
-      ### CHANGE DATA
-      ###
-      
-      
-      Y <- formato_datos(datos)
-      
-      
-      ###
-      ### FOREST PLOTS of sens and spec
-      ###
-      
-      
-      Y_forest <-  format_forest(X)
-
-      output$CIsen = renderPlotly({
-        forest_sens(Y_forest)
-      })
-      
-      # output$downloadCIsen <- downloadHandler(
-      #   filename = "forest_plot_sens.png",
-      #   content = function(file){
-      #     file.copy(forest_sens(Y_forest), file)
-      #   }
-      # )
-      
-      output$CIspe = renderPlotly({
-        forest_spec(Y_forest)
-      })
-      
-      
-      
-      
-      
-      ###
-      ### BIVARIATE BINOMIAL META-ANALYSIS WITH GLMER
-      ### 
-      
-      
-      ## GLM table estimates
-      
-      ma_biv = modelo(X)$summary
-      logit <- modelo(X)$logit
-      tabla <- modelo(X)$tabla
-      corr <- modelo(X)$corr
-      
-
-      output$glm_table <- renderTable(
-        tabla,  striped = TRUE, digits = 3
-      )
-      
-      output$downloadDataGlm <-  downloadHandler(
-        filename = function(){
-          paste('glm_estimates', Sys.Date(), '.csv', sep = '')
-        },
-        content = function(con){
-          write.csv(tabla, con)
-        }
-      )
-      
-      
-      ## RevMan parameters table
-      
-      corr_df <- data.frame(
-        Coefficient = "Corr(logits)",
-        Estimate = corr
-      )
-      
-      tablarevman <- plot_sroc(Y, ma_biv)$tabla
-      tablarevman2 <- rbind(tablarevman, corr_df)
-      
-      output$tablaRevMan <- renderTable(
-        tablarevman2,  striped = TRUE, digits = 3
-      )
-      
-      output$downloadRevMan <-  downloadHandler(
-        filename = function(){
-          paste('revman_parameters', Sys.Date(), '.csv', sep = '')
-        },
-        content = function(con){
-          write.csv(tablarevman2, con)
-        }
-      )
-      
-
-      
-      tabla_ellipse <- plot_sroc(Y, ma_biv)$tabla_ellipse
-      
-      
-      
-      ###
-      ### SROC plot options
-      ###
-      
-      
-      observeEvent(input$sroc_options, {
-        sroc_plot <- plot_ly() %>% layout(
-          title = "SROC plane",
-          xaxis = list(title = "1-Specificity", range = c(-0.05, 1.05)),
-          yaxis = list(title = "Sensitivity", range = c(-0.05, 1.05)),
-          showlegend = FALSE,
-          width = 450, 
-          height = 450
-        )
-        if (identical(input$sroc_options, "studies")){
-                output$SROC <- renderPlotly({
-                  sroc_plot %>% add_trace(
-                    data = Y %>% mutate(x = 1 - (tn / (tn + fp)), y = tp / (tp + fn)),
-                    x =  ~ x,
-                    y =  ~ y,
-                    type = "scatter",
-                    hoverinfo = "text",
-                    text = ~ paste('ID:', id, '\n', '1-Specificity:', x, '\n', 'Sensitivity:' , y),
-                    marker = list(color = pal_npg("nrc")(1))
-                  )
-                })
-        } else if (identical(input$sroc_options, "ellipse")) {
-              output$SROC <- renderPlotly({
-                sroc_plot %>% add_trace(
-                  data = tabla_ellipse,
-                  x = ~ specificity,
-                  y = ~ sensitivity,
-                  text = NULL,
-                  mode = "lines",
-                  marker = list(size = 0.5, color = toRGB("black"))
-                )
-              })
-        } else {
-                output$SROC <- renderPlotly({
-                  sroc_plot = plot_sroc(Y, ma_biv)$sroc
-                  sroc_plot
-                })
-        }
-        
-      })
-      
-
-      
-      
-      
-      ###
-      ### HETEROGENEITY ESTIMATES TABLE BY BAYESIAN MODEL
-      ###
-      
-
-
-      area <- round(plot_sroc(Y, ma_biv)$area,3)
-      VarLogitSen = round(ma_biv$varcor$study[1, 1],3)  ##Var(logit(sen))
-      VarLogitSpe = round(ma_biv$varcor$study[2, 2],3)  ##Var(logit(spe))
-      
-      tabla_het2 = data.frame(
-        Coefficient = c("Area of ellipse", "Var(logit(sen))", "Var(logit(spec))"),
-        Estimate = c(area, VarLogitSen, VarLogitSpe)
-      )
-      
-      
-      output$tabla_het <-  renderTable(
-        tabla_het2, align = 'c', striped = TRUE, digits = 3
-      )
-      
-      
-      output$downloadHet_est <-  downloadHandler(
-        filename = function(){
-          paste('heterogeneity_estimates', Sys.Date(), '.csv', sep = '')
-        },
-        content = function(con){
-          write.csv(tabla_het2, con)
-        }
-      )
-      
-      
-      observeEvent(input$heter, {
-        withProgress(message = "Calculating heterogeneity estimates", detail = "This may take a while...", {
-          heterogen <- heterogeneidad(X)
-          
-          output$Table2 = renderTable(
-            heterogen, align = 'c', striped = TRUE, digits = 3)
-          
-          output$downloadDataHet <-  downloadHandler(
-            filename = function(){
-              paste('heterogeneity_estimates', Sys.Date(), '.csv', sep = '')
-            },
-            content = function(con){
-              write.csv(heterogen, con)
-            }
-          )
-        })
-        })
-      
-      
-      
-      
-      
-      ###
-      ### ANALYSIS OF SUBGROUPS
-      ###
-  
-      
-      
-      observeEvent(input$subgroup_button, {
-        subgroup1  <- paste("Subgroup selected: ",as.character(input$subgroups_list))
-        subgroup <-  input$subgroups_list
-        output$subgroup <- renderText(subgroup1)
-        
-        X3 <- split(X, as.factor(X[,paste(subgroup)]))
-        modelo_covariables <- modelo_sg(X3)
-        names(modelo_covariables) = names(X3)
-        
-        
-        ## Estimates Table
-
-        output$glm_subgroups <- renderUI({
-          tfc = function(m, name){
-            renderDataTable(m, options = list(paging = FALSE, searching = FALSE), caption = paste("Subgroup: ",name,"."))
+          if (values$upload_state == "example") {
+            paste("example_dataset", "ROC_plane.svg", sep = "_") 
+          } else {
+            paste(tools::file_path_sans_ext(input$file_upload), "ROC_plane.svg", sep = "_") 
           }
-          list_of_tables <-  lapply(1:length(modelo_covariables), function(i){
-            name_subgroup = names(modelo_covariables)[i]
-            tfc(modelo_covariables[[i]]$resultados_final$df, name_subgroup)
-          })
+        },
+        content = function(file) {
+          ggsave(file, plot = roc_plane(), device = "svg", width = 6.5, height = 6.5) 
         })
-        
+    }  
+  })
 
-        
-        
-        ## SROC plots
-        
-        df <-  ldply(X3, data.frame)
-        df$Specif <- 1-(df$tn/(df$tn+df$fp))
-        df$Sensit <- df$tp/(df$tp+df$fn)
-        
-        plot_tmp <-  ggplot() + geom_point(data = df, aes(x= Specif, y = Sensit, text= paste("ID:", id),  colour = factor(df[,(subgroup)]))) 
-        
-        mypal <-  pal_npg("nrc")(length(modelo_covariables))
-        
-        
-        for (i in 1:length(modelo_covariables)) {
-          
-          plot_tmp <- plot_tmp   + 
-            geom_polygon(data = modelo_covariables[[i]]$tabla2$tabla2, aes(specificity, sensitivity),fill = NA, colour = mypal[i]) + scale_color_npg() 
-        }
-        
-        plot_tmp <-   plot_tmp + xlim(0,1) + ylim(0,1) +  
-          labs(x = "1-Specificity", y = "Sensitivity", title= "SROC Plane", colour ="Covariates") 
-        
-        
-        
-        output$sroc_subgroups <- renderPlotly({
-          ggplotly(plot_tmp, tooltip = c("x","y","text"))
-        }) 
-         
-        
-      })
-      
-      
-      
-      
-      
-      
-      
-      ###
-      ### META-REGRESSION
-      ###
-      
-      ## DIfferent models table 
-
-      
-      ## Meta-reg button 
-      observeEvent(input$metareg_button, {
-        
-        
-        selected = input$covariates_list
-        
-        
-        X_model <- X
-        
-        X_model$mr <- X[,paste(selected)]
-        
-
-        if (nlevels(X_model$mr) == 2) {
-        
-          nsub_texto = paste("Subgroup 0 = ", levels(X[,paste(selected)])[1], ", Subgroup 1 = ", levels(X[,paste(selected)])[2])
-          
-          output$nsub = renderPrint({
-            cat(nsub_texto)
-          })
-          
-          
-          X_model$mr <- as.numeric(X_model$mr)
-          X_model$mr <- (X_model$mr)-1
-          X_model <-  reshape(X_model, direction = "long", varying = list(c("n1", "n0"), c("true1", "true0")), timevar = "sens", times = c(1,0),
-                              v.names = c("n", "true"))
-          
-          X_model <- X_model[order(X_model$id),]
-          X_model$spec <-  1-X_model$sens
-          X_model$A <- 1-(X_model$mr)
-          X_model$B <- 1-X_model$A
-          
-          X_model$sen_0 <- (X_model$A)*(X_model$sens)
-          X_model$sen_1 <- (X_model$B)*(X_model$sens)
-          X_model$spe_0 <- (X_model$A)*(X_model$spec)
-          X_model$spe_1 <- (X_model$B)*(X_model$spec)
-          
-          ## CASCADA MODELOS
-          
-          convg_A <- function(X_model){ # model A
-            out <- tryCatch(
-              {
-                model_A = glmer(formula = cbind(true, n - true)~ 0 + sens + spec + (0+sens + spec|study), data = X_model, family = binomial)
-              }, 
-              error=function(cond){
-                message("Here is the original error message:")
-                message(cond)
-                return(NA)
-              },
-              warning=function(cond){
-                converge = "Model A failed to converge."
-                message("Here is the original warning message:")
-                message(cond)
-                return(NULL)
-              }
-              
-            )
-            return(out)
-          } # end model A
-          
-          model_A = convg_A(X_model)
-          
-          convg_B <- function(X_model){ # model B 
-            out <- tryCatch(
-              {
-                model_B = glmer(formula = cbind(true, n - true)~ 0 + sen_0 + sen_1 + spe_0 + spe_1 + (0+sens + spec|study), data = X_model, family = binomial)
-              }, 
-              error=function(cond){
-                message("Here is the original error message:")
-                message(cond)
-                return(NA)
-              },
-              warning=function(cond){
-                converge = "Model B failed to converge."
-                message("Here is the original warning message:")
-                message(cond)
-                return(NULL)
-              }
-            )
-            return(out)
-          } # end model B 
-          
-          model_B = convg_B(X_model)
-          test_BA = lrtest(model_A, model_B)
-          pval_BA <- test_BA$`Pr(>Chisq)`[2]
-          
-          final = ""
-          
-          if (pval_BA <= 0.05) {  # si signif AB
-            
-            # model_C
-            convg_C <- function(X_model){
-              out <- tryCatch(
-                {
-                  model_C = glmer(formula = cbind(true, n - true)~ 0 + sens + spe_0 + spe_1 + (0+sens + spec|study), data = X_model, family = binomial)
-                }, 
-                error=function(cond){
-                  message("Here is the original error message:")
-                  message(cond)
-                  return(NA)
-                },
-                warning=function(cond){
-                  converge="Model C failed to converge."
-                  message("Here is the original warning message:")
-                  message(cond)
-                  return(NULL)
-                }
-                
-              )
-              return(out)
-            } # end model C
-            model_C = convg_C(X_model)
-            test_BC = lrtest(model_B, model_C)
-            pval_BC <- test_BC$`Pr(>Chisq)`[2]
-            
-            #model_D
-            
-            convg_D <- function(X_model){
-              out <- tryCatch(
-                {
-                  model_D = glmer(formula = cbind(true, n - true)~ 0 + sen_0 + sen_1 + spec + (0+sens + spec|study), data = X_model, family = binomial)
-                }, 
-                error=function(cond){
-                  message("Here is the original error message:")
-                  message(cond)
-                  return(NA)
-                },
-                warning=function(cond){
-                  converge="Model D failed to converge."
-                  message("Here is the original warning message:")
-                  message(cond)
-                  return(NULL)
-                }
-                
-              )
-              return(out)
-            } # end model D
-            model_D = convg_D(X_model)
-            test_BD = lrtest(model_B, model_D)
-            pval_BD <- test_BD$`Pr(>Chisq)`[2]
-            
-            if (pval_BC <= 0.05 & pval_BD > 0.05) { #si signif BC, no signif BD - model_D
-              
-              # model_K
-              convg_K <- function(X_model){
-                out <- tryCatch(
-                  {
-                    model_K = glmer(formula = cbind(true, n - true)~ 0 + sen_0 + sen_1 + spec +(0 +sen_1 + spe_1 |study) + (0 +sen_0 + spe_0 |study), data = X_model, family = binomial)
-                  }, 
-                  error=function(cond){
-                    message("Here is the original error message:")
-                    message(cond)
-                    return(NA)
-                  },
-                  warning=function(cond){
-                    converge="Model K failed to converge."
-                    message("Here is the original warning message:")
-                    message(cond)
-                    return(NULL)
-                  }
-                  
-                )
-                return(out)
-              } # end model K 
-              model_K = convg_K(X_model)
-              test_DK = lrtest(model_D, model_K)
-              pval_DK <- test_DK$`Pr(>Chisq)`[2]
-              
-              if (pval_DK <= 0.05) { #si signif DK
-                
-                # model_L
-                convg_L <- function(X_model){
-                  out <- tryCatch(
-                    {
-                      model_L = glmer(formula = cbind(true, n - true)~ 0 + sen_0 + sen_1 + spec +(0 +sen_1 + spec |study) + (0 +sen_0 + spec |study), data = X_model, family = binomial)
-                    }, 
-                    error=function(cond){
-                      message("Here is the original error message:")
-                      message(cond)
-                      return(NA)
-                    },
-                    warning=function(cond){
-                      converge="Model L failed to converge."
-                      message("Here is the original warning message:")
-                      message(cond)
-                      return(NULL)
-                    }
-                    
-                  )
-                  return(out)
-                } # end model L 
-                model_L = convg_L(X_model)
-                test_KL = lrtest(model_K, model_L)
-                pval_KL <- test_KL$`Pr(>Chisq)`[2]
-                
-                # model_M
-                
-                convg_M <- function(X_model){
-                  out <- tryCatch(
-                    {
-                      model_M = glmer(formula = cbind(true, n - true)~ 0 + sen_0 + sen_1 + spec +(0 +spe_1 + sens |study) + (0 +sens + spe_0 |study), data = X_model, family = binomial)
-                    }, 
-                    error=function(cond){
-                      message("Here is the original error message:")
-                      message(cond)
-                      return(NA)
-                    },
-                    warning=function(cond){
-                      converge="Model M failed to converge."
-                      message("Here is the original warning message:")
-                      message(cond)
-                      return(NULL)
-                    }
-                    
-                  )
-                  return(out)
-                } # end model M 
-                model_M = convg_M(X_model)
-                test_KM = lrtest(model_K, model_M)
-                pval_KM <- test_KM$`Pr(>Chisq)`[2]
-                
-                
-                if (pval_KL <= 0.05 & pval_KM > 0.05) { #si signif KL, no signif KM
-                  final = "There is statistical significance between models A and B (pVal < 0.05).\nThere is statistical significance between models B and C but not between B and D.\nThere is statistical significance between models D and K.\nThere is statistical significance between models K and L but not between models K and M.\nThe final model is M."
-                  model_final = model_M
-                } else if (pval_KM <= 0.05 & pval_KL > 0.05) { #si signif KM, no signif KL
-                  final = "There is statistical significance between models A and B (pVal < 0.05).\nThere is statistical significance between models B and C but not between B and D.\nThere is statistical significance between models D and K.\nThere is statistical significance between models K and M but not between models K and L.\nThe final model is L."
-                  model_final = model_L
-                } else if (pval_KL <= 0.05 & pval_KM <= 0.05) { #si signif KM, si signif KL
-                  final = "There is statistical significance between models A and B (pVal < 0.05).\nThere is statistical significance between models B and C but not between B and D.\nThere is statistical significance between models D and K.\nThere is statistical significance between models K and L, and also between models K and M.\nThe final model is K."
-                  model_final = model_K
-                }
-                
-              } else { # no signif DK
-                
-                if (is.null(model_K)){
-                  final = "There is statistical significance between models A and B (pVal < 0.05).\nThere is statistical significance between models B and D (pVal < 0.05).\nModel K failed to converge.\nThe final model is D."
-                }else {
-                  final = "There is statistical significance between models A and B (pVal < 0.05).\nThere is statistical significance between models B and D (pVal < 0.05).\nThere is NOT statistical significance between models D and K.\nThe final model is D."
-                }
-                
-                model_final = model_D
-              }
-              
-            } else if (pval_BD <= 0.05 & pval_BC > 0.05) { #si signif BD, no signif BC - model_C
-              
-              # model_H
-              convg_H <- function(X_model){
-                out <- tryCatch(
-                  {
-                    model_H = glmer(formula = cbind(true, n - true)~ 0 + sens + spe_0 + spe_1 +(0 +sen_1 + spe_1 |study) + (0 +sen_0 + spe_0 |study), data = X_model, family = binomial)
-                  }, 
-                  error=function(cond){
-                    message("Here is the original error message:")
-                    message(cond)
-                    return(NA)
-                  },
-                  warning=function(cond){
-                    converge="Model H failed to converge."
-                    message("Here is the original warning message:")
-                    message(cond)
-                    return(NULL)
-                  }
-                  
-                )
-                return(out)
-              } # end model H 
-              model_H = convg_H(X_model)
-              test_CH = lrtest(model_C, model_H)
-              pval_CH <- test_CH$`Pr(>Chisq)`[2]
-              
-              
-              if (pval_CH <= 0.05){ #si signif CH
-                
-                # model_I
-                convg_I <- function(X_model){
-                  out <- tryCatch(
-                    {
-                      model_I = glmer(formula = cbind(true, n - true)~ 0 + sens + spe_0 + spe_1 +(0 +sen_1 + spec |study) + (0 +sen_0 + spec |study), data = X_model, family = binomial)
-                    }, 
-                    error=function(cond){
-                      message("Here is the original error message:")
-                      message(cond)
-                      return(NA)
-                    },
-                    warning=function(cond){
-                      converge="Model I failed to converge."
-                      message("Here is the original warning message:")
-                      message(cond)
-                      return(NULL)
-                    }
-                    
-                  )
-                  return(out)
-                }  # end model I 
-                model_I = convg_I(X_model)
-                test_HI = lrtest(model_H, model_I)
-                pval_HI <- test_HI$`Pr(>Chisq)`[2]
-                
-                # model_J
-                convg_J <- function(X_model){
-                  out <- tryCatch(
-                    {
-                      model_J = glmer(formula = cbind(true, n - true)~ 0 + sens + spe_0 + spe_1 +(0 +spe_1 + sens |study) + (0 +sens + spe_0 |study), data = X_model, family = binomial)
-                    }, 
-                    error=function(cond){
-                      message("Here is the original error message:")
-                      message(cond)
-                      return(NA)
-                    },
-                    warning=function(cond){
-                      converge="Model J failed to converge."
-                      message("Here is the original warning message:")
-                      message(cond)
-                      return(NULL)
-                    }
-                    
-                  )
-                  return(out)
-                } # end model J 
-                model_J = convg_J(X_model)
-                test_HJ = lrtest(model_H, model_J)
-                pval_HJ <- test_HJ$`Pr(>Chisq)`[2]
-                
-                
-                if (pval_HI <= 0.05 & pval_HJ > 0.05) { #si signif HI, no signif HJ
-                  final = "There is statistical significance between models A and B (pVal < 0.05).\nThere is statistical significance between models B and D but not between B and C.\nThere is statistical significance between models C and H.\nThere is statistical significance between models H and I, but not between models H and J.\nThe final model is J."
-                  model_final = model_J
-                } else if (pval_HJ <= 0.05 & pval_HI > 0.05) { #si signif HJ, no signif HI
-                  final = "There is statistical significance between models A and B (pVal < 0.05).\nThere is statistical significance between models B and D but not between B and C.\nThere is statistical significance between models C and H.\nThere is statistical significance between models H and J, but not between models H and I.\nThe final model is I."
-                  model_final = model_I
-                } else if(pval_HI <= 0.05 & pval_HJ <= 0.05) { #si signif HI, si signif HJ
-                  final = "There is statistical significance between models A and B (pVal < 0.05).\nThere is statistical significance between models B and D but not between B and C.\nThere is statistical significance between models C and H.\nThere is statistical significance between models H and I, and also between models H and J.\nThe final model is H."
-                  model_final = model_H
-                }
-                
-              } else { #no signif CH
-                if (is.null(model_H)) {
-                  final = "There is statistical significance between models A and B (pVal < 0.05).\nThere is statistical significance between models B and D but not between B and C.\nModel H failed to converge.\nThe final model is C."
-                } else {
-                  final = "There is statistical significance between models A and B (pVal < 0.05).\nThere is statistical significance between models B and D but not between B and C.\nThere is NOT statistical significance between models C and H.\nThe final model is C."
-                }
-                
-                model_final = model_C
-              }
-              
-            } else if (pval_BD <= 0.05 & pval_BC <= 0.05){ #si signif BD y si signif BC - model_B
-              
-              # model_E
-              convg_E <- function(X_model){
-                out <- tryCatch(
-                  {
-                    model_E = glmer(formula = cbind(true, n - true)~ 0 + sen_0 + sen_1 + spe_0 + spe_1 +(0 +sen_1 + spe_1 |study) + (0 +sen_0 + spe_0 |study), data = X_model, family = binomial)
-                  }, 
-                  error=function(cond){
-                    message("Here is the original error message:")
-                    message(cond)
-                    return(NA)
-                  },
-                  warning=function(cond){
-                    converge = "Model E failed to converge."
-                    message("Here is the original warning message:")
-                    message(cond)
-                    return(NULL)
-                  }
-                  
-                )
-                return(out)
-              } # end model E
-              model_E = convg_E(X_model)
-              test_EB = lrtest(model_B, model_E)
-              pval_EB <- test_EB$`Pr(>Chisq)`[2]
-              
-              if (pval_EB <= 0.05) { #si signif EB
-                
-                # model_F
-                convg_F <- function(X_model){
-                  out <- tryCatch(
-                    {
-                      model_F = glmer(formula = cbind(true, n - true)~ 0 + sen_0 + sen_1 + spe_0 + spe_1 +(0 +sen_1 + spec |study) + (0 +sen_0 + spec |study), data = X_model, family = binomial)
-                    }, 
-                    error=function(cond){
-                      message("Here is the original error message:")
-                      message(cond)
-                      return(NA)
-                    },
-                    warning=function(cond){
-                      converge="Model F failed to converge."
-                      message("Here is the original warning message:")
-                      message(cond)
-                      return(NULL)
-                    }
-                    
-                  )
-                  return(out)
-                } # end model F 
-                model_F = convg_F(X_model)
-                test_EF = lrtest(model_E, model_F)
-                pval_EF <- test_EF$`Pr(>Chisq)`[2]
-                
-                # model_G
-                convg_G <- function(X_model){
-                  out <- tryCatch(
-                    {
-                      model_G = glmer(formula = cbind(true, n - true)~ 0 + sen_0 + sen_1 + spe_0 + spe_1 +(0 +spe_1 + sens |study) + (0 +spe_0 + sens |study), data = X_model, family = binomial)
-                    }, 
-                    error=function(cond){
-                      message("Here is the original error message:")
-                      message(cond)
-                      return(NA)
-                    },
-                    warning=function(cond){
-                      converge="Model G failed to converge."
-                      message("Here is the original warning message:")
-                      message(cond)
-                      return(NULL)
-                    }
-                    
-                  )
-                  return(out)
-                } # end model G 
-                model_G = convg_G(X_model)
-                test_EG = lrtest(model_E, model_G)
-                pval_EG <- test_EG$`Pr(>Chisq)`[2]
-                
-                
-                if(pval_EF <= 0.05 & pval_EG > 0.05){ #si signif EF, no signific EG
-                  final = "There is statistical significance between models A and B (pVal < 0.05).\n There is statistical significance between models B and C, and also B and D.\nThere is statistical difference between models E and B.\nThere is statistical difference between models E and F, but not between E and G.\n The final model is G. "
-                  model_final = model_G
-                } else if (pval_EG <= 0.05 & pval_EF > 0.05){ #si signif EG, no signif EF
-                  final = "There is statistical significance between models A and B (pVal < 0.05).\n There is statistical significance between models B and C, and also B and D.\nThere is statistical difference between models E and B.\nThere is statistical difference between models E and G, but not between E and F.\n The final model is F. "
-                  model_final = model_F
-                } else if (pval_EF <= 0.05 & pval_EG <= 0.05){ #si signif EF, si signif EG
-                  final = "There is statistical significance between models A and B (pVal < 0.05).\n There is statistical significance between models B and C, and also B and D.\nThere is statistical difference between models E and B.\nThere is statistical difference between models E and F, and also E and G.\n The final model is E. "
-                  model_final = model_E
-                }
-                
-              }  else { # no signif EB
-                
-                if (is.null(model_E)){
-                  final = "There is statistical significance between models A and B (pVal < 0.05).\nModel E failed to converge.\nThe final model is B."
-                } else {
-                  final = "There is statistical significance between models A and B (pVal < 0.05).\nThere is NOT statistical significance between models B and E (pVal > 0.05).\nThe final model is B."
-                }
-                
-                #final = "model_B"
-                model_final = model_B
-              }
-              
-            } 
-            
-          } else { # no signif AB
-            
-            if (is.null(model_B)){
-              final = "There is statistical significance between models A and B (pVal < 0.05).\nModel B failed to converge.\nThe final model is A."
-            } else {
-              final = "There is NOT statistical significance between models A and B (pVal > 0.05).\nThe final model is A."
-            }
-            
-            model_final = model_A
-          }
-          
-          ## fin cascada
-          
-          output$models <- renderPrint({
-            cat(final)
-          })
-          prueba = mr_table(model_A, model_final)$tabla
-          
-          output$model_final <- renderTable({
-            prueba
-          })
-          
-        } else {
-          showModal(modalDialog("Select a covariate with two factor levels."))
-          return()
-        }
-        
-
-        
-        
-        
-      }) # fin button meta-reg
-      
-      
-      
-        
-      ### 
-      ### SENSIBILITY
-      ### 
-      
-      observeEvent(input$studies_list, {
-        
-        # Selected studies
-        
-        X2_studies <- X[which(X$id %in% input$studies_list),] #table with information of selected studies only
-        
-        
-        
-        observeEvent(input$refresh, {
-          ## GLM table estimates
-          ma_biv_sens = modelo(X2_studies)$summary
-          logit_sens <- modelo(X2_studies)$logit
-          tabla_sens <- modelo(X2_studies)$tabla
-          corr_sens <- modelo(X2_studies)$corr
-          
-          output$glm_table_sens <- renderTable(
-            tabla_sens,  striped = TRUE, digits = 3
-          )
-          
-          output$downloadDataGlm_sens <-  downloadHandler(
-            filename = function(){
-              paste('glm_estimates', Sys.Date(), '.csv', sep = '')
-            },
-            content = function(con){
-              write.csv(tabla_sens, con)
-            }
-          )
-          
-          ## SROC Plane
-          
-          Y <- formato_datos(X2_studies)
-          
-          sroc_sens <- plot_sroc(Y, ma_biv_sens)$sroc
-          
-          output$sroc_sens <- renderPlotly({
-            sroc_sens
-          })
-          
-        })
-        
-      })
-      
-      
-      
-
-
-      updateTabsetPanel(session, "tabSet", selected = "Plots")
-    } )
-  }))
+  # ----------------------------------------------------------------------------------------------- #
   
-})
+  ### METANALYSIS - MODEL SELECTION ####
+  
+  # "model_select" stores the result of the "BRMA_model_select()" function, 
+  # which determines whether a bivariate model can be applied 
+  # (if the dataset has more than 4 instances and the model converges) 
+  # or a univariate model should be used.
+  model_select <- reactive({
+    if (is.null(data())) {
+      return('NULL')
+    }
+    else {
+      return(BRMA_model_select(data())$model)
+    }
+  })
+  
+  # The "bivariate" output is used in the ui.R script to define the 
+  # conditionalPanel's condition in the meta-analysis statistics tab. 
+  output$bivariate <- reactive({
+    return(model_select()=="bivariate")
+  })
+  outputOptions(output, 'bivariate', suspendWhenHidden=FALSE)
+  
+  ## Bivariate - Univariate message: ##
+  
+  # The message that is printed on the screen when the model is univariate (rows < 4 or does not converge).
+  # "renderUI" is used together with "htmltools::HTML" to be able to customize 
+  # the appearance of the message, add icons, etc. (via HTML script).
+  output$univariate_message <- renderUI({
+    if (nrow(data()) < 4){
+      htmltools::HTML('<p style="text-align:center; font-size:16px"><i class="fa fa-exclamation-circle"></i> Attention: The uploaded dataset contains less than 4 studies, please refer to the results presented in the <strong>Univariate model</strong> tab.</p>')
+    }
+    else {
+      htmltools::HTML('<p style="text-align:center; font-size:16px"><i class="fa fa-exclamation-circle"></i> Attention: The bivariate model has not converged, please refer to the results presented in the <strong>Univariate model</strong> tab.</p>')
+    }
+  })
+  
+  # If the bivariate analysis doesn't converge, then all other tabs 
+  # (SROC, Subgroup analysis and Sensitivity analysis) are disabled:
+  observe({
+    if (model_select() == "univariate"){
+      addCssClass(selector = "a[data-value='meta_biv_sroc_tab']", class = "inactiveLink2")
+      addCssClass(selector = "a[data-value='meta_biv_sub_tab']", class = "inactiveLink2")
+      addCssClass(selector = "a[data-value='meta_biv_sens_tab']", class = "inactiveLink2")
+    }
+    if (model_select() == "bivariate"){
+      removeCssClass(selector = "a[data-value='meta_biv_sroc_tab']", class = "inactiveLink2")
+      removeCssClass(selector = "a[data-value='meta_biv_sub_tab']", class = "inactiveLink2")
+      removeCssClass(selector = "a[data-value='meta_biv_sens_tab']", class = "inactiveLink2")
+    }
+  })
+
+  
+  # ----------------------------------------------------------------------------------------------- #
+  
+  #### METANALYSIS - BIVARIATE - STATISTICS ####
+  
+  # The "meta_biv_stats" variable stores a list containing 
+  # the three outputs of the "BRMA_statistics" function 
+  # (summary statistics, revman parameters and heterogeneity tables)
+  meta_biv_stats <- reactive({
+    if (is.null(data())) {
+      return(NULL)
+    }
+    else {
+      return(BRMA_statistics(data()))
+    }
+  })
+  
+  # First table output, the Summary Statistics table:
+  output$meta_biv_stats_summary <- DT::renderDataTable({
+    DT::datatable(meta_biv_stats()[[1]], options = list(columnDefs = list(list(className = 'dt-center', targets = 1:3)), 
+                                                        paging = FALSE,
+                                                        searching = FALSE,
+                                                        info = FALSE, 
+                                                        ordering = FALSE))
+  })
+  # Second table output, the Revman Parameters table:
+  output$meta_biv_stats_revman <- DT::renderDataTable({
+    DT::datatable(meta_biv_stats()[[2]], options = list(columnDefs = list(list(className = 'dt-center', targets = 1)), 
+                                                        paging = FALSE,
+                                                        searching = FALSE,
+                                                        info = FALSE, 
+                                                        ordering = FALSE))
+  })
+  # Third table output, the Heterogeneity table:
+  output$meta_biv_stats_heterogen <- DT::renderDataTable({
+    DT::datatable(meta_biv_stats()[[3]], options = list(columnDefs = list(list(className = 'dt-center', targets = 1)),
+                                                        paging = FALSE,
+                                                        searching = FALSE,
+                                                        info = FALSE, 
+                                                        ordering = FALSE))
+  })
+  
+  ## Downloading the three tables: ##
+  
+  # The first table:
+  output$dl_meta_biv_stats_summary <- downloadHandler(
+    filename = function() {
+      if (values$upload_state == "example") {
+        paste("example_dataset", "biv_stats_summary.csv", sep = "_") 
+      } else {
+        paste(tools::file_path_sans_ext(input$file_upload), "biv_stats_summary.csv", sep = "_") 
+      }
+    },
+    content = function(file) {
+      write.csv(meta_biv_stats()[[1]], file, row.names = TRUE) 
+    }
+  )
+  
+  # The second table:
+  output$dl_meta_biv_stats_revman <- downloadHandler(
+    filename = function() {
+      if (values$upload_state == "example") {
+        paste("example_dataset", "biv_stats_revman.csv", sep = "_") 
+      } else {
+        paste(tools::file_path_sans_ext(input$file_upload), "biv_stats_revman.csv", sep = "_") 
+      }
+    },
+    content = function(file) {
+      write.csv(meta_biv_stats()[[2]], file, row.names = TRUE) 
+    }
+  )
+  
+  # The thrid table:
+  output$dl_meta_biv_stats_heterogen <- downloadHandler(
+    filename = function() {
+      if (values$upload_state == "example") {
+        paste("example_dataset", "biv_stats_heterogen.csv", sep = "_") 
+      } else {
+        paste(tools::file_path_sans_ext(input$file_upload), "biv_stats_heterogen.csv", sep = "_") 
+      }
+    },
+    content = function(file) {
+      write.csv(meta_biv_stats()[[3]], file, row.names = TRUE) 
+    }
+  )
+  
+  # ---------------------------------------------------- #
+  
+  # Variance and correlation conditions:
+  varcorr <- reactive({
+    if (is.null(data())) {
+      return(NULL)
+    }
+    else if (!is.null(data()) & model_select()=="bivariate"){
+      if (meta_biv_stats()[[2]][8] == 1){
+        return("corr1")
+      }
+      if (meta_biv_stats()[[2]][8] == -1){
+        return("corr-1")
+      }
+      if (meta_biv_stats()[[2]][3] == 0){
+        return("sen0")
+      }
+      if (meta_biv_stats()[[2]][4] == 0){
+        return("spe0")
+      }
+      else{
+        return(NULL)
+      }
+    }
+  }) 
+  
+  # The "bivariate" output is used in the ui.R script to define the 
+  # conditionalPanel's condition in the meta-analysis statistics tab. 
+  output$varcorr_recommend <- reactive({
+    return(!is.null(varcorr()))
+  })
+  outputOptions(output, 'varcorr_recommend', suspendWhenHidden=FALSE)
+  
+  # The message that is printed on the screen when the model is univariate (rows < 4 or does not converge).
+  # "renderUI" is used together with "htmltools::HTML" to be able to customize 
+  # the appearance of the message, add icons, etc. (via HTML script).
+  output$varcorr_message <- renderUI({
+    if (varcorr() == "corr1"){
+      htmltools::HTML('<p style="text-align:center; font-size:16px"><i class="fa fa-exclamation-circle"></i> Attention: Model fitting encountered problems to estimate some parameters of the model.</p>')
+    }
+    else if (varcorr() == "corr-1"){
+      htmltools::HTML('<p style="text-align:center; font-size:16px"><i class="fa fa-exclamation-circle"></i> Attention: Model fitting encountered problems to estimate some parameters of the model.</p>')
+    }
+    else if (varcorr() == "sen0"){
+      htmltools::HTML('<p style="text-align:center; font-size:16px"><i class="fa fa-exclamation-circle"></i> Attention: Model fitting encountered problems to estimate some parameters of the model.</p>')
+    }
+    else if (varcorr() == "spe0"){
+      htmltools::HTML('<p style="text-align:center; font-size:16px"><i class="fa fa-exclamation-circle"></i> Attention: Model fitting encountered problems to estimate some parameters of the model.</p>')
+    }
+  })
+  
+  # ----------------------------------------------------------------------------------------------- #
+  
+  #### METANALYSIS - UNIVARIATE - STATISTICS ####
+  
+  # The "meta_uni_stats" variable stores a list containing 
+  # the two outputs of the "URMA_statistics" function 
+  # (summary statistics and heterogeneity tables)
+  meta_uni_stats <- reactive({
+    if (is.null(data())) {
+      return(NULL)
+    }
+    else {
+      return(URMA_statistics(data()))
+    }
+  })
+  
+  # First table output, the Summary Statistics table:
+  output$meta_uni_stats_summary <- DT::renderDataTable({
+    DT::datatable(meta_uni_stats()[[1]], options = list(columnDefs = list(list(className = 'dt-center', targets = 1:3)), # center align all columns except first.
+                                                        paging = FALSE,
+                                                        searching = FALSE,
+                                                        info = FALSE, 
+                                                        ordering = FALSE))
+  })
+ 
+  # Second table output, the Heterogeneity table:
+  output$meta_uni_stats_heterogen <- DT::renderDataTable({
+    DT::datatable(meta_uni_stats()[[2]], options = list(columnDefs = list(list(className = 'dt-center', targets = 1)), # center align all columns except first.
+                                                        paging = FALSE,
+                                                        searching = FALSE,
+                                                        info = FALSE, 
+                                                        ordering = FALSE))
+  })
+  
+  ## Downloading the two tables: ##
+  
+  # The first table:
+  output$dl_meta_uni_stats_summary <- downloadHandler(
+    filename = function() {
+      if (values$upload_state == "example") {
+        paste("example_dataset", "uni_stats_summary.csv", sep = "_") 
+      } else {
+        paste(tools::file_path_sans_ext(input$file_upload), "uni_stats_summary.csv", sep = "_") 
+      }
+    },
+    content = function(file) {
+      write.csv(meta_uni_stats()[[1]], file, row.names = TRUE) 
+    }
+  )
+  
+  # The second table:
+  output$dl_meta_uni_stats_heterogen <- downloadHandler(
+    filename = function() {
+      if (values$upload_state == "example") {
+        paste("example_dataset", "uni_stats_heterogen.csv", sep = "_") 
+      } else {
+        paste(tools::file_path_sans_ext(input$file_upload), "uni_stats_heterogen.csv", sep = "_") 
+      }
+    },
+    content = function(file) {
+      write.csv(meta_uni_stats()[[2]], file, row.names = TRUE) 
+    }
+  )
+  
+  # ---------------------------------------------------- #
+  
+  ## Forest Plot- Sensitivity ##
+  
+  # Variable that stores the sensitivity forest plot:
+  uni_forest_sen <- reactive({
+    if (is.null(data())) {
+      return(NULL)
+    }
+    else {
+      return(forest_plot_sen(data(), NULL))
+    }
+  })
+  
+  # The height of the plot is adjusted according to the number of studies and rendered.
+  output$uni_forest_sen <- renderUI({
+    plotOutput("uni_sen", height = 160+15*nrow(data()))
+  })
+  output$uni_sen <- renderPlot({
+    uni_forest_sen() 
+  })
+  
+  ## Downloading the sensitivity forest plot: ##
+  
+  output$dl_uni_forest_sen <- downloadHandler(
+    
+    filename = function(){
+      if (values$upload_state == "example") {
+        paste("example_dataset", paste("sensitivity_forest_plot", input$dl_uni_forest_sen_options, sep = ""), sep = "_") 
+      } else {
+        paste(tools::file_path_sans_ext(input$file_upload), paste("sensitivity_forest_plot", input$dl_uni_forest_sen_options, sep = ""), sep = "_")
+      }
+    },
+    content = function(file){
+      # Downlading a .png file:
+      if (input$dl_uni_forest_sen_options == ".png") {
+        png(file, width = 1500, height = 350+40*nrow(data()), units = "px", res = 180)
+      }
+      # Downlading a .svg file:
+      else if (input$dl_uni_forest_sen_options == ".svg") {
+        svg(file, width = 10, height = 12+0.2*nrow(data()))
+      }  
+      forest_plot_sen(data(), NULL)
+      dev.off()
+    }
+  )
+  
+  # ---------------------------------------------------- #
+  
+  ## Forest Plot - Specificity ##
+  
+  # Variable that stores the specificity forest plot (if there is any).
+  uni_forest_spe <- reactive({
+    if (is.null(data())) {
+      return(NULL)
+    }
+    else {
+      return(forest_plot_spe(data(), NULL))
+    }
+  })
+  
+  # The height of the plot is adjusted according to the number of studies and rendered.
+  output$uni_forest_spe <- renderUI({
+    plotOutput("uni_spe", height = 160+15*nrow(data()))
+  })
+  output$uni_spe <- renderPlot({
+    uni_forest_spe()
+  })
+  
+  ## Downloading the specificity forest plot: ##
+  
+  output$dl_uni_forest_spe <- downloadHandler(
+    
+    filename = function(){
+      if (values$upload_state == "example") {
+        paste("example_dataset", paste("specificity_forest_plot", input$dl_uni_forest_spe_options, sep = ""), sep = "_") 
+      } else {
+        paste(tools::file_path_sans_ext(input$file_upload), paste("specificity_forest_plot", input$dl_uni_forest_spe_options, sep = ""), sep = "_") 
+      }
+    },
+    content = function(file){
+      # Downlading a .png file:
+      if (input$dl_uni_forest_spe_options == ".png") {
+        png(file, width = 1500, height = 350+40*nrow(data()), units = "px", res = 180)
+      }
+      # Downlading a .svg file:
+      else if (input$dl_uni_forest_spe_options == ".svg") {
+        svg(file, width = 10, height = 12+0.2*nrow(data()))
+      }  
+      forest_plot_spe(data(), NULL)
+      dev.off()
+    }
+  )
+  
+
+  # ----------------------------------------------------------------------------------------------- #
+
+  #### METANALYSIS - BIVARIATE - SROC CURVE ####
+  
+  # The "meta_biv_sroc" variable stores the bivariate SROC curve: 
+  meta_biv_sroc <- reactive({
+    if (is.null(data())) {
+      return(NULL)
+    }
+    else {
+      
+      # The "BRMA_sroc()" function is used to generate the graph, 
+      # and the user inputs are used as arguments of the function 
+      # (the output of a checklist is a list that only includes the selected items, 
+      # so we check if a certain item is in the "input$meta_biv_sroc_options" list).
+      return(BRMA_sroc(data(), 
+             summary_point = "sum_point" %in% input$meta_biv_sroc_options,
+             ellipse_conf = "conf_ellip" %in% input$meta_biv_sroc_options, 
+             ellipse_pred = "pred_ellip" %in% input$meta_biv_sroc_options, 
+             curve = "curve" %in% input$meta_biv_sroc_options, 
+             points = "points" %in% input$meta_biv_sroc_options))
+    }
+  })
+ 
+  ## Rendering the plot: ##
+  
+  meta_biv_sroc_plotly <- reactive({
+    plot <- ggplotly(meta_biv_sroc(), tooltip = c("text"), height = 550, width = 760) # The ggplot object is converted to plotlty object.
+    # The legend labels are adjusted:
+    for (i in 1:length(plot$x$data)){
+      if (!is.null(plot$x$data[[i]]$name)){
+        plot$x$data[[i]]$name =  gsub("\\(","",strsplit(plot$x$data[[i]]$name,",")[[1]][1])
+      }
+    }
+    return(plot)
+  })
+  
+  output$meta_biv_sroc_curve <- plotly::renderPlotly({
+    meta_biv_sroc_plotly() %>% 
+      config(displayModeBar = F) # This hides the plotly embedded menu (known as modebar).
+  })
+  
+  ## Downloading the plot: ##
+  
+  # An "observe" environment is initialized to perform different actions 
+  # depending on what the user has selected as file format option (.png or .svg): 
+  observe({
+    
+    # Downlading a .png file:
+    if (input$dl_meta_biv_sroc_curve_options == ".png") {
+      output$dl_meta_biv_sroc_curve <- downloadHandler(
+        filename = function(){
+          if (values$upload_state == "example") {
+            paste("example_dataset", "SROC_curve.png", sep = "_") 
+          } else {
+            paste(tools::file_path_sans_ext(input$file_upload), "SROC_curve.png", sep = "_") # Name of the downloaded file ("tools::file_path_sans_ext" removes extensions).
+          }
+        },
+        content = function(file) {
+          ggsave(file, plot = meta_biv_sroc(), device = "png", width = 9, height = 6.5) 
+        })
+    }
+    
+    # Downlading a .svg file:
+    if (input$dl_meta_biv_sroc_curve_options == ".svg") {
+      output$dl_meta_biv_sroc_curve <- downloadHandler(
+        filename = function(){
+          if (values$upload_state == "example") {
+            paste("example_dataset", "SROC_curve.svg", sep = "_") 
+          } else {
+            paste(tools::file_path_sans_ext(input$file_upload), "SROC_curve.svg", sep = "_") # Name of the downloaded file ("tools::file_path_sans_ext" removes extensions).
+          }
+        },
+        content = function(file) {
+          ggsave(file, plot = meta_biv_sroc(), device = "svg", width = 9, height = 6.5) 
+        })
+    }  
+  })
+  
+  
+  # ----------------------------------------------------------------------------------------------- #
+  
+  #### METANALYSIS - BIVARIATE - SUBGROUP ANALYSIS ####
+  
+  ## The "covariate_selection_subgroup" variable: ##
+  
+  # "covariate_selection_subgroup" stores the names of all covariates:
+  covariate_selection_subgroup <- reactive({
+    if (is.null(data())) {
+      return(NULL)
+    }
+    else {
+      not_covariates <- c("tp", "fp", "fn", "tn", "id") # columns that are not covariates.
+      covariate_names_select <- names(data()[, !names(data()) %in% not_covariates, drop = F]) # names of the covariates.
+      return(covariate_names_select)
+    }
+  })
+  
+  ## Disabling the "Subgroup analysis" tab: ##
+  
+  # If the dataset has no covariates, the subgroup analysis tab is disabled:
+  observe({
+    if (length(covariate_selection_subgroup())==0){
+      addCssClass(selector = "a[data-value='meta_biv_sub_tab']", class = "inactiveLink2")
+    }
+  })  
+  
+  ## Drop-down menu contents: ##
+  
+  # The content of the "meta_biv_sub_covariate_select" drop-down menu is modified 
+  # by adding the choices within the "covariate_selection_subgroup" variable (all the covariates)
+  observe({
+    updateSelectInput(session, "meta_biv_sub_covariate_select",
+                      choices = covariate_selection_subgroup()
+    )})
+  
+  
+  ## Selected covariate: ##
+  
+  # The "covariate_selected_subgroup" variable stores the name of the covariate selected 
+  # by the user in the "meta_biv_sub_covariate_select" drop-down menu.
+  covariate_selected_subgroup <- reactive({
+    if (is.null(data()) | is.null(covariate_selection_subgroup())){
+      return(NULL)
+    }
+    else{
+      return(input$meta_biv_sub_covariate_select)
+    }
+  })
+  
+  
+  ## Number of categories: ##
+  
+  # "subgroup_categories_covar" indicates whether the selected covariate 
+  # has two or more categories:
+  subgroup_categories_covar <- reactive({
+    if (!is.null(data())){
+      if (length(unique(data()[1:nrow(data()),covariate_selected_subgroup()])) != 2){
+        return(TRUE)
+      }
+      else {
+        return(FALSE)
+      }
+    }
+  })
+  
+  # The "subgroup_categories" output is used in the ui.R script 
+  # to enable the corresponding conditional panel:
+  output$subgroup_categories <- reactive({
+    return(subgroup_categories_covar())
+  })
+  outputOptions(output, 'subgroup_categories', suspendWhenHidden=FALSE)
+  
+  
+  ## Disabling the "Metaregression" tab: ##
+  
+  # If the number of categories that the selected covariate has is greater than 2,
+  # the "Metaregression" tab is disaled.
+  observe({
+    if (!is.null(data())){
+      if (length(unique(data()[1:nrow(data()),covariate_selected_subgroup()])) > 2){
+        addCssClass(selector = "a[data-value='meta_biv_sub_metareg_tab']", class = "inactiveLink2")
+      }
+      else {
+        removeCssClass(selector = "a[data-value='meta_biv_sub_metareg_tab']", class = "inactiveLink2")
+      }
+    }  
+  })  
+        
+  # ---------------------------------------------------- #
+  
+  ## Evaluating convergence: ##
+
+  # "model_select_subgroup" stores the result of the "BRMA_model_select()" function,
+  # which determines whether a bivariate model can be applied
+  # (if the dataset has more than 4 instances and the model converges)
+  # or a univariate model should be used.
+  model_select_subgroup <- reactive({
+    if (is.null(data()) | covariate_selected_subgroup() == "") {
+      return(FALSE)
+    }
+    else {
+      return(subgroup_model_select(data(), covariate_selected_subgroup())$model == "bivariate")
+    }
+  })
+
+  # The "bivariate_subgroup" output is used in the ui.R script to define the
+  # conditionalPanel's condition in the subgroup analysis tab.
+  output$bivariate_subgroup <- reactive({
+    if (is.null(data())) {
+      return(FALSE)
+    }
+    else {
+      if (covariate_selected_subgroup() == ""){
+        return(FALSE)
+      }
+      else {
+        return(model_select_subgroup())
+      }
+    }
+  })
+  outputOptions(output, 'bivariate_subgroup', suspendWhenHidden=FALSE)
+
+  # ---------------------------------------------------- #
+  
+  ## Building the three tables: ##
+  
+  # First table output, the subgroup Summary Statistics table:
+  stats_summary_sub <- reactive({
+    return(subgroup(data(), covariate_selected_subgroup())$summary_statistics_subgroup)
+  })
+  
+  # Second table output, the subgroup Revman table:
+  stats_revman_sub <- reactive({
+    return(subgroup(data(), covariate_selected_subgroup())$revman_subgroup)
+  })
+  
+  # Third table output, the subgroup Metaregression table:
+  stats_metareg_sub <- reactive({
+    return(metaregresion(data(), covariate_selected_subgroup()))
+  })
+  
+  ## Rendering and downloading the three tables: ##
+  
+  # Summary statistics:
+  output$meta_biv_sub_summary <- DT::renderDataTable({
+    DT::datatable(stats_summary_sub(), rownames = FALSE, options = list(columnDefs = list(list(className = 'dt-center', targets = 2:ncol(stats_summary_sub())-1)), 
+                                                                        paging = FALSE, 
+                                                                        searching = FALSE, 
+                                                                        info = FALSE, 
+                                                                        ordering = FALSE 
+                                                                        ))
+  })
+  
+  output$dl_meta_biv_sub_summary <- downloadHandler(
+    filename = function() {
+      if (values$upload_state == "example") {
+        paste("example_dataset", "biv_sub_summary.csv", sep = "_") 
+      } else {
+        paste(tools::file_path_sans_ext(input$file_upload), "biv_sub_summary.csv", sep = "_") 
+      }
+    },
+    content = function(file) {
+      write.csv(stats_summary_sub(), file, row.names = FALSE) 
+    }
+  )
+  
+  # Revman parameters:
+  output$meta_biv_sub_revman <- DT::renderDataTable({
+    DT::datatable(stats_revman_sub(), rownames = FALSE, options = list(columnDefs = list(list(className = 'dt-center', targets = 2:ncol(stats_revman_sub())-1)), 
+                                                                       paging = FALSE,
+                                                                       searching = FALSE,
+                                                                       info = FALSE, 
+                                                                       ordering = FALSE
+                                                                       ))
+  })
+  
+  output$dl_meta_biv_sub_revman <- downloadHandler(
+    filename = function() {
+      if (values$upload_state == "example") {
+        paste("example_dataset", "biv_sub_revman.csv", sep = "_") 
+      } else {
+        paste(tools::file_path_sans_ext(input$file_upload), "biv_sub_revman.csv", sep = "_") 
+      }
+    },
+    content = function(file) {
+      write.csv(stats_revman_sub(), file, row.names = FALSE) 
+    }
+  )
+  
+  # Metaregression:
+  output$meta_biv_sub_metareg <- DT::renderDataTable({
+    DT::datatable(stats_metareg_sub(), rownames = FALSE, options = list(columnDefs = list(list(className = 'dt-center', targets = 1:4)),
+                                                                        paging = FALSE,
+                                                                        searching = FALSE,
+                                                                        info = FALSE, 
+                                                                        ordering = FALSE
+                                                                        ))
+  })
+  
+  output$dl_meta_biv_sub_metareg <- downloadHandler(
+    filename = function() {
+      if (values$upload_state == "example") {
+        paste("example_dataset", "biv_sub_metareg.csv", sep = "_") 
+      } else {
+        paste(tools::file_path_sans_ext(input$file_upload), "biv_sub_metareg.csv", sep = "_") 
+      }
+    },
+    content = function(file) {
+      write.csv(stats_metareg_sub(), file, row.names = FALSE) 
+    }
+  )
+  
+  # ---------------------------------------------------- #
+  
+  ## SROC curve: ##
+  
+  # The "meta_biv_sub_sroc" variable stores the subgroup SROC curve: 
+  meta_biv_sub_sroc <- reactive({
+    if (is.null(data()) | any((data() %>% group_by(get(covariate_selected_subgroup())) %>% summarize(count=n()))$count < 3)) {
+      return(NULL)
+    }
+    else {
+      # The "BRMA_sroc()" function is used to generate the graph, 
+      # and the user inputs are used as arguments of the function 
+      # (the output of a checklist is a list that only includes the selected items, 
+      # so we check if a certain item is in the "input$meta_biv_sub_options" list).
+      return(BRMA_sroc(data(), covariate = covariate_selected_subgroup(), subgroup = TRUE,
+                       summary_point = "sum_point" %in% input$meta_biv_sub_options,
+                       ellipse_conf = "conf_ellip" %in% input$meta_biv_sub_options, 
+                       ellipse_pred = "pred_ellip" %in% input$meta_biv_sub_options, 
+                       curve = "curve" %in% input$meta_biv_sub_options, 
+                       points = "points" %in% input$meta_biv_sub_options))
+    }
+  })
+  
+  # The "sub_roc_warning" output is used in the ui.R script to define the 
+  # conditionalPanel's condition in the subgroup SROC curve box 
+  output$sub_roc_warning <- reactive({
+    if (is.null(data()) | is.null(covariate_selected_subgroup())) {
+      return('NULL')
+    }
+    else {
+      if (any((data() %>% group_by(get(covariate_selected_subgroup())) %>% summarize(count=n()))$count < 3)) { 
+        return(FALSE)
+      }
+      else {
+        return(TRUE)
+      }
+    }
+  })
+  outputOptions(output, 'sub_roc_warning', suspendWhenHidden=FALSE)
+      
+  ## Rendering the plot: ##
+  
+  meta_biv_sub_sroc_plotly <- reactive({
+    if (is.null(data()) | any((data() %>% group_by(get(covariate_selected_subgroup())) %>% summarize(count=n()))$count < 3)) {
+      return(NULL)
+    }
+    else {
+      plot <- ggplotly(meta_biv_sub_sroc(), tooltip = c("text"), height = 400, width = 560) # The ggplot object is converted to plotlty object.
+      # The legend labels are adjusted:
+      plot$x$layout$annotations[[1]]$text <- ""
+      for (i in 1:length(plot$x$data)) {
+        if (!is.null(plot$x$data[[i]]$name)) {
+            name <- gsub("^([^,]*,[^,]*),.*","\\1", plot$x$data[[i]]$name)
+            plot$x$data[[i]]$name <- gsub(","," ", name)
+            plot$x$data[[i]]$name <- gsub("\\(|\\)","", plot$x$data[[i]]$name)
+        }
+        if (!is.null(plot$x$data[[i]]$marker$symbol)) {
+          # To include summary points in the legend, which are not shown by default:
+          if (plot$x$data[[i]]$marker$symbol == "square") {
+            plot$x$data[[i]]$showlegend <- TRUE
+            plot$x$data[[i]]$name <- gsub(":.*","",plot$x$data[[i]]$text)
+  
+          }
+          # To remove the last characters of points names:
+          if (plot$x$data[[i]]$marker$symbol != "square") {
+            plot$x$data[[i]]$name <- gsub(" .*", "", plot$x$data[[i]]$name)
+          }
+        }
+      }
+      return(plot)
+    }
+  })
+
+  output$meta_biv_sub_sroc <- plotly::renderPlotly({
+    meta_biv_sub_sroc_plotly() %>% 
+      config(displayModeBar = F) # This hides the plotly embedded menu (known as modebar).
+  })
+  
+  ## Downloading the plot: ##
+  
+  # An "observe" environment is initialized to perform different actions 
+  # depending on what the user has selected as file format option (.png or .svg): 
+  observe({
+    
+    # Downlading a .png file:
+    if (input$dl_meta_biv_sub_sroc_options == ".png") {
+      output$dl_meta_biv_sub_sroc <- downloadHandler(
+        filename = function(){
+          if (values$upload_state == "example") {
+            paste("example_dataset", "sub_SROC_curve.png", sep = "_") 
+          } else {
+            paste(tools::file_path_sans_ext(input$file_upload), "sub_SROC_curve.png", sep = "_") 
+          }
+        },
+        content = function(file) {
+          ggsave(file, plot = meta_biv_sub_sroc(), device = "png", width = 9, height = 6.5) 
+        })
+    }
+    
+    # Downlading a .svg file:
+    if (input$dl_meta_biv_sub_sroc_options == ".svg") {
+      output$dl_meta_biv_sub_sroc <- downloadHandler(
+        filename = function(){
+          if (values$upload_state == "example") {
+            paste("example_dataset", "sub_SROC_curve.svg", sep = "_") 
+          } else {
+            paste(tools::file_path_sans_ext(input$file_upload), "sub_SROC_curve.svg", sep = "_")
+          }
+        },
+        content = function(file) {
+          ggsave(file, plot = meta_biv_sub_sroc(), device = "svg", width = 9, height = 6.5)  
+        })
+    }  
+  })
+  
+  
+  # ----------------------------------------------------------------------------------------------- #
+  
+  #### METANALYSIS - BIVARIATE - SENSITIVITY ANALYSIS ####
+  
+  ## Disabling the "Sensitivity analysis" tab: ##
+  
+  # If the dataset does not contain covariables this tab is disabled:
+  observe({
+    if (length(covariate_selection_subgroup())==0){
+      addCssClass(selector = "a[data-value='meta_biv_sens_tab']", class = "inactiveLink2")
+    }
+  })  
+  
+  ## Drop-down covariate menu contents: ##
+  
+  # The content of the "meta_biv_sens_covariate_select" drop-down menu is modified 
+  # by adding the choices within the "covariate_selection_subgroup" variable (all the covariates)
+  observe({
+    updateSelectInput(session, "meta_biv_sens_covariate_select",
+                      choices = covariate_selection_subgroup()
+    )})
+  
+  
+  ## Selected covariate: ##
+  
+  # The "covariate_selected_sensitivity" variable stores the name of the covariate selected 
+  # by the user in the "meta_biv_sens_covariate_select" drop-down menu.
+  covariate_selected_sensitivity <- reactive({
+    return(input$meta_biv_sens_covariate_select)
+  })
+  
+  ## Drop-down category menu contents: ##
+
+  # The "categories" variable stores the names of all categories within the selected covariate:
+  categories <- reactive({
+    if (is.null(covariate_selected_sensitivity()) | is.null(data())){
+      return(c("Select a covariate..."))
+    }
+    else{
+      all_categories <- data()[1:nrow(data()),covariate_selected_sensitivity()]
+      return(unique(all_categories))
+    }
+  })
+
+  # The content of the "meta_biv_sens_category_select" drop-down menu is modified
+  # by adding the choices within the "categories" variable:
+  observe({
+    updateSelectInput(session, "meta_biv_sens_category_select",
+                      choices = categories()
+    )})
+  
+  ## Selected category: ##
+
+  # The "category_selected_sensitivity" variable stores the name of the category selected
+  # by the user in the "meta_biv_sens_category_select" drop-down menu.
+  category_selected_sensitivity <- reactive({
+    return(input$meta_biv_sens_category_select)
+  })
+  
+  # ---------------------------------------------------- #
+
+  ## Subsetting the dataset according to the selected category of the selected covariate: ##
+
+  # "data_sensitivity" is a subset of data() in which only the rows containing
+  # the selected category for the selected covariate are included:
+  data_sensitivity <- reactive({
+    if (covariate_selected_sensitivity() %in% colnames(data())){
+      subset <- split(data(), data()[, covariate_selected_sensitivity()])
+      for (i in 1:length(subset)){
+        if (subset[[i]][1,covariate_selected_sensitivity()] == category_selected_sensitivity()){
+          return(subset[[i]])
+        }
+      }
+    }
+  })
+  
+  ## Evaluating convergence: ##
+  
+  # "model_select_sensitivity" stores the result of the "BRMA_model_select()" function,
+  # which determines whether a bivariate model can be applied
+  # (if the dataset has more than 4 instances and the model converges)
+  # or a univariate model should be used.
+  model_select_sensitivity <- reactive({
+    if (is.null(data_sensitivity())) {
+      return('NULL')
+    }
+    else if (nrow(data_sensitivity())<2) {
+      return(FALSE)
+    }
+    else {
+      return(BRMA_model_select(data_sensitivity())$model=="bivariate")
+    }
+  })
+  
+  # The "bivariate_subgroup" output is used in the ui.R script to define the 
+  # conditionalPanel's condition in the subgroup analysis tab. 
+  output$bivariate_sensitivity <- reactive({
+    if (is.null(data())) {
+      return('NULL')
+    }
+    else {
+    return(model_select_sensitivity())
+    }
+  })
+  outputOptions(output, 'bivariate_sensitivity', suspendWhenHidden=FALSE)
+  
+  # Table output corresponding to the selected subset of data:
+  output$meta_biv_sens_data <- DT::renderDataTable({
+    DT::datatable(data_sensitivity(), options = list(columnDefs = list(list(className = 'dt-center', targets = 2:ncol(data())-1)), 
+                                                     lengthMenu = c(5, 10, 25, 50), 
+                                                     pageLength = 5, 
+                                                     orderClasses = TRUE), 
+                                                     rownames = FALSE)
+  })
+  
+  # ---------------------------------------------------- #
+  
+  ## Summary statistics: ##
+
+  # The "meta_biv_stats" variable stores the first output 
+  # of the "BRMA_statistics" function, summary statistics:
+  meta_biv_sens_stats <- reactive({
+    if (is.null(data_sensitivity()) | model_select_sensitivity() == FALSE) {
+      return(NULL)
+    }
+    else {
+      return(BRMA_statistics(data_sensitivity())[[1]])
+    }
+  })
+  
+  # Table output corresponding to the sensitivity analysis summary statistics:
+  observeEvent(is.null(meta_biv_sens_stats())==FALSE, { # only necessary because otherwise the table wouldn't update correctly.
+    output$meta_biv_sens_summary <- DT::renderDataTable({
+      DT::datatable(meta_biv_sens_stats(), options = list(columnDefs = list(list(className = 'dt-center', targets = 1:3)), 
+                                                          paging = FALSE,
+                                                          searching = FALSE,
+                                                          info = FALSE, 
+                                                          ordering = FALSE))
+    })
+  })
+  
+  ## Downloading the table: ##
+  output$dl_meta_biv_sens_summary <- downloadHandler(
+    filename = function() {
+      if (values$upload_state == "example") {
+        paste("example_dataset", "biv_sens_summary.csv", sep = "_") 
+      } else {
+        paste(tools::file_path_sans_ext(input$file_upload), "biv_sens_summary.csv", sep = "_")
+      }
+    },
+    content = function(file) {
+      write.csv(meta_biv_sens_stats(), file, row.names = TRUE) 
+    }
+  )
+  
+  # ----------------------------------------------------------------------------------------------- #
+  
+  #### METANALYSIS - HSROC MODEL ####
+  
+  # Coming soon.
+  
+  observe({
+    if (!is.null(data)){
+      addCssClass(selector = "a[data-value='meta_hsroc_tab']", class = "inactiveLink2")
+    }
+  }) 
+  
+  
+  # ----------------------------------------------------------------------------------------------- #
+  
+  #### SUMMARY OF FINDINGS ####
+  
+  ## Fields with validation for patient and prevalence inputs: ##
+  
+  iv1 <- InputValidator$new()
+  iv1$add_rule("patients", sv_numeric())
+  iv1$add_rule("patients", sv_gte(0))
+  iv1$enable()
+  
+  iv2 <- InputValidator$new()
+  iv2$add_rule("prevalence", sv_numeric())
+  iv2$add_rule("prevalence", sv_between(0, 100))
+  iv2$enable()
+  
+  ## Check for errors in the entered values: ##
+  
+  check_sumfind_table_error <- reactive({
+    if (is.na(input$patients) | is.na(input$prevalence)){
+      return(TRUE)
+    }
+    else {
+      if (input$patients >= 0 & input$prevalence >= 0 & input$prevalence <= 100){
+        return(FALSE)
+      }
+      else {
+        return(TRUE)
+      }
+    }
+  })
+  
+  # output to display the error message
+  # (by activating the corresponding conditional panel in the ui.R script):
+  output$sumfind_table_error <- reactive({
+    return(check_sumfind_table_error())
+  })
+  outputOptions(output, 'sumfind_table_error', suspendWhenHidden=FALSE)
+  
+  # Using the "prevalencia" function to draw the table with the values entered by the user:
+  sumfind_table <- reactive({
+    if (is.null(data()) | check_sumfind_table_error() == TRUE) {
+      return(NULL)
+    }
+    else {
+      if (model_select()=="bivariate" & is.null(varcorr())){
+        return(prevalencia(data(), 
+                           model = "bivariate", 
+                           prevslide = input$prevalence, 
+                           input$patients))
+      }
+      else {
+        return(prevalencia(data(), 
+                           model = "univariate", 
+                           prevslide = input$prevalence, 
+                           input$patients))
+      }
+    }
+  })
+  
+  ## Rendering the plot: ##
+  
+  output$sumfind_table <- renderPlot({
+      sumfind_table()
+  })
+      
+  ## Downloading the plot: ##
+  
+  # An "observe" environment is initialized to perform different actions
+  # depending on what the user has selected as file format option (.png or .svg):
+  observe({
+
+    # Downlading a .png file:
+    if (input$dl_sumfind_options == ".png") {
+      output$dl_sumfind <- downloadHandler(
+        filename = function(){
+          if (values$upload_state == "example") {
+            paste("example_dataset", "summary_of_findings.png", sep = "_") 
+          } else {
+            paste(tools::file_path_sans_ext(input$file_upload), "summary_of_findings.png", sep = "_") 
+          }
+        },
+        content = function(file) {
+          ggsave(file, plot = sumfind_table(), device = "png", width = 8.5, height = 6.5)
+        })
+    }
+
+    # Downlading a .svg file:
+    if (input$dl_sumfind_options == ".svg") {
+      output$dl_sumfind <- downloadHandler(
+        filename = function(){
+          if (values$upload_state == "example") {
+            paste("example_dataset", "summary_of_findings.svg", sep = "_") 
+          } else {
+            paste(tools::file_path_sans_ext(input$file_upload), "summary_of_findings.svg", sep = "_")
+          }
+        },
+        content = function(file) {
+          ggsave(file, plot = sumfind_table(), device = "svg", width = 8.5, height = 6.5)
+        })
+    }
+  })
+  
+})  
+
+
+########################################################################################
+#################################### UNUSED CODE #######################################
+########################################################################################
+#
+# ## Splitting the dataset according to the value of the selected covariate: ##
+# 
+# # "data_split" is a list in which partitions (based on the covariate selected by the user) 
+# # of the original dataset are stored.
+# data_split_sub <- reactive({
+#   if (covariate_selected_subgroup() %in% colnames(data())){
+#     return(split(data(), data()[, covariate_selected_subgroup()]))
+#   }
+# })
+# 
+# 
+# ## Evaluating stability of the model: ##
+# 
+# output$bivariate_stability_subgroup <- reactive({
+#   if (is.null(data_split_sub())) {
+#     return(NULL)
+#   }
+#   else {
+#     stable <- TRUE
+#     for (i in 1:length(data_split_sub())){
+#       if (is.na(BRMA_statistics(data_split_sub()[[i]])[[2]][8])){
+#         stable <- FALSE
+#       }
+#       else if (BRMA_statistics(data_split_sub()[[i]])[[2]][3] == 0){
+#         unstable <- FALSE
+#       }
+#       else if (BRMA_statistics(data_split_sub()[[i]])[[2]][4] == 0){
+#         stable <- FALSE
+#       }
+#     }
+#   }  
+#   return((is.null(model_select_subgroup()) | model_select_subgroup()==0) & stable)
+# })
+# outputOptions(output, 'bivariate_stability_subgroup', suspendWhenHidden=FALSE)
+# 
+# 
+# ## Tables: ##
+# 
+# stats_summary_sub <- reactive({
+#   merge_list <- list()
+#   for (i in 1:length(data_split_sub())){
+#     merge_list[[i]] <- BRMA_statistics(data_split_sub()[[i]])[[1]]
+#     colnames(merge_list[[i]])[1:ncol(merge_list[[i]])] <- paste(colnames(merge_list[[i]])[1:ncol(merge_list[[i]])], data_split_sub()[[i]][1,covariate_selected_subgroup()], sep = " ")
+#   }
+#   merged_table <- do.call(cbind, merge_list)
+#   return(merged_table)
+# })
+# stats_revman_sub <- reactive({
+#   merge_list <- list()
+#   for (i in 1:length(data_split_sub())){
+#     merge_list[[i]] <- BRMA_statistics(data_split_sub()[[i]])[[2]]
+#     colnames(merge_list[[i]])[1:ncol(merge_list[[i]])] <- paste(colnames(merge_list[[i]])[1:ncol(merge_list[[i]])], data_split_sub()[[i]][1,covariate_selected_subgroup()], sep = " ")
+#   }
+#   merged_table <- do.call(cbind, merge_list)
+#   return(merged_table)
+# })
+# stats_heterogeneity_sub <- reactive({
+#   merge_list <- list()
+#   for (i in 1:length(data_split_sub())){
+#     merge_list[[i]] <- BRMA_statistics(data_split_sub()[[i]])[[3]]
+#     colnames(merge_list[[i]])[1:ncol(merge_list[[i]])] <- paste(colnames(merge_list[[i]])[1:ncol(merge_list[[i]])], data_split_sub()[[i]][1,covariate_selected_subgroup()], sep = " ")
+#   }
+#   merged_table <- do.call(cbind, merge_list)
+#   return(merged_table)
+# })
+#
+# # Heterogeneity:
+# output$meta_biv_sub_heterogeneity <- DT::renderDataTable({
+#   DT::datatable(stats_heterogeneity_sub(), options = list(columnDefs = list(list(className = 'dt-center', targets = 1:ncol(stats_heterogeneity_sub()))), # center align all columns except first.
+#                                                           paging = FALSE,
+#                                                           searching = FALSE,
+#                                                           info = FALSE, 
+#                                                           ordering = FALSE
+#                                                           ))
+# })
+# 
+# output$dl_meta_biv_sub_heterogeneity <- downloadHandler(
+#   filename = function() {
+#     paste(tools::file_path_sans_ext(input$file_upload), "biv_sub_heterogeneity.csv", sep = "_") # Name of the downloaded file ("tools::file_path_sans_ext" removes extensions).
+#   },
+#   content = function(file) {
+#     write.csv(stats_heterogeneity_sub(), file, row.names = TRUE) # The table is written as a .csv file.
+#   }
+# )
